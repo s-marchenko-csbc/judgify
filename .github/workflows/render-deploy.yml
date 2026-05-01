@@ -1,0 +1,19 @@
+name: Deploy to Render
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger backend deploy hook
+        if: ${{ secrets.RENDER_API_DEPLOY_HOOK != '' }}
+        run: curl -fsS -X POST "${{ secrets.RENDER_API_DEPLOY_HOOK }}"
+
+      - name: Trigger frontend deploy hook
+        if: ${{ secrets.RENDER_FRONT_DEPLOY_HOOK != '' }}
+        run: curl -fsS -X POST "${{ secrets.RENDER_FRONT_DEPLOY_HOOK }}"
