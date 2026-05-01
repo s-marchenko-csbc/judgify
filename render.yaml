@@ -34,7 +34,6 @@ services:
     name: judgify-landing
     runtime: static
     rootDir: frontend
-    plan: free
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
     envVars:
