@@ -58,7 +58,14 @@ function readStoredAccounts() {
 function uniqueAccounts(accounts) {
   const seen = new Set();
   return accounts.filter((account) => {
-    const key = account.accountKey || account.username || account.email || account.displayName;
+    const username = (account.username || "").trim().toLowerCase();
+    const email = (account.email || "").trim().toLowerCase();
+    const role = (account.primaryRole || "participant").trim().toLowerCase();
+    const key = username
+      ? `username:${username}`
+      : email
+        ? `email:${email}:role:${role}`
+        : account.accountKey || account.displayName;
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
