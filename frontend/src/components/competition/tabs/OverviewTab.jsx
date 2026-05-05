@@ -1,4 +1,5 @@
 import React from "react";
+import { useLanguage } from "../../../context/LanguageContext";
 
 function getEmbedUrl(value) {
   const raw = String(value || "").trim();
@@ -49,6 +50,7 @@ function activeRoundForStream(competition) {
 }
 
 function StreamBlock({ competition }) {
+  const { t } = useLanguage();
   const round = activeRoundForStream(competition);
   if (!round?.is_stream_enabled || (!round.stream_url && !round.stream_embed_url)) return null;
 
@@ -57,21 +59,21 @@ function StreamBlock({ competition }) {
   return (
     <section className="competition-stream-card">
       <div className="competition-stream-header">
-        <h2 className="competition-section-title">Live stream</h2>
-        <span>{round.stream_label || round.title || "Round stream"}</span>
+        <h2 className="competition-section-title">{t("overviewTab.liveStream")}</h2>
+        <span>{round.stream_label || round.title || t("overviewTab.roundStream")}</span>
       </div>
       {embedSrc ? (
         <div className="competition-stream-frame-wrap">
           <iframe
             src={embedSrc}
-            title={round.stream_label || round.title || "Competition stream"}
+            title={round.stream_label || round.title || t("overviewTab.competitionStream")}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             allowFullScreen
           />
         </div>
       ) : (
         <a className="competition-stream-link" href={round.stream_url} target="_blank" rel="noreferrer">
-          Open stream
+          {t("overviewTab.openStream")}
         </a>
       )}
     </section>
@@ -84,16 +86,17 @@ export default function OverviewTab({
   onCommentTextChange,
   onCommentPost,
 }) {
+  const { t } = useLanguage();
   const announcement = competition.announcements?.[0];
 
   return (
     <section className="competition-panel">
       <StreamBlock competition={competition} />
 
-      <h2 className="competition-section-title">Announcements</h2>
+      <h2 className="competition-section-title">{t("overviewTab.announcements")}</h2>
 
       {!announcement ? (
-        <p className="competition-empty-note">No announcements yet.</p>
+        <p className="competition-empty-note">{t("overviewTab.emptyAnnouncements")}</p>
       ) : (
         <div className="announcement-card">
           <div className="announcement-header">
@@ -116,12 +119,12 @@ export default function OverviewTab({
           <div className="announcement-comment-form">
             <input
               type="text"
-              placeholder="Leave a comment..."
+              placeholder={t("overviewTab.commentPlaceholder")}
               value={commentText}
               onChange={(e) => onCommentTextChange(e.target.value)}
             />
             <button type="button" onClick={onCommentPost}>
-              Post
+              {t("overviewTab.post")}
             </button>
           </div>
 

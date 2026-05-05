@@ -1,13 +1,16 @@
 import React from "react";
+import { useLanguage } from "../../context/LanguageContext";
 
 const tabs = [
-  { id: "overview", label: "Overview" },
-  { id: "participants", label: "Participants" },
-  { id: "results", label: "Results" },
-  { id: "judging", label: "Judging" },
+  { id: "overview", labelKey: "detailTabs.overview" },
+  { id: "participants", labelKey: "detailTabs.participants" },
+  { id: "results", labelKey: "detailTabs.results" },
+  { id: "judging", labelKey: "detailTabs.judging" },
 ];
 
 export default function CompetitionTabs({ activeTab, onTabChange }) {
+  const { t } = useLanguage();
+
   return (
     <div className="competition-detail-tabs">
       {tabs.map((tab) => (
@@ -19,7 +22,7 @@ export default function CompetitionTabs({ activeTab, onTabChange }) {
           }`}
           onClick={() => onTabChange(tab.id)}
         >
-          {tab.label}
+          {t(tab.labelKey)}
         </button>
       ))}
     </div>

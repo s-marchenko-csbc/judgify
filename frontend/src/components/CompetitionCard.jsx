@@ -214,7 +214,7 @@ export default function CompetitionCard({ item, onSavedChange }) {
           <div className="card-name">{item.name}</div>
           <div className="card-tags-inline">
             {item.industry && (
-              <span className="card-industry-tag">{item.industry}</span>
+              <span className="card-industry-tag">{t(`options.industry.${item.industry}`, { defaultValue: item.industry })}</span>
             )}
             {item.language && (
               <span className="card-industry-tag">{String(item.language).toUpperCase()}</span>

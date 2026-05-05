@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import AccountSwitcher from "../components/AccountSwitcher";
 import { useAuth } from "../context/AuthContext";
+import { useLanguage } from "../context/LanguageContext";
 import {
   assignCompetitionJudge,
   createCompetitionDraft,
@@ -14,14 +15,6 @@ import {
   saveCompetitionBuilder,
   uploadCompetitionMaterial,
 } from "../api/competitionBuilderApi";
-
-const steps = [
-  { id: 1, title: "Basics", hint: "Card, catalog filters and public identity" },
-  { id: 2, title: "Format & Access", hint: "Registration, review, teams and discovery" },
-  { id: 3, title: "Schedule & Rounds", hint: "Registration, competition stages and round windows" },
-  { id: 4, title: "Submissions & Evaluation", hint: "Submission rules, criteria and awards" },
-  { id: 5, title: "Publish", hint: "Preview, validation and invitations" },
-];
 
 const defaultDraft = {
   name: "Untitled competition",
@@ -229,7 +222,7 @@ function timeValue(value) {
   return Number.isNaN(time) ? null : time;
 }
 
-function getScheduleErrors(draft) {
+function getScheduleErrors(draft, t) {
   const errors = [];
   const starts = timeValue(draft.starts_at);
   const ends = timeValue(draft.ends_at);
@@ -239,13 +232,13 @@ function getScheduleErrors(draft) {
   const judgingEnds = timeValue(draft.judging_ends_at);
   const resultsAt = timeValue(draft.results_public_at);
 
-  if (starts && ends && ends <= starts) errors.push("Competition end must be later than competition start.");
-  if (registrationStarts && starts && registrationStarts > starts) errors.push("Registration cannot start after the competition starts.");
-  if (registrationEnds && starts && registrationEnds > starts) errors.push("Registration must end no later than the competition start.");
-  if (registrationStarts && registrationEnds && registrationEnds <= registrationStarts) errors.push("Registration end must be later than registration start.");
-  if (judgingStarts && ends && judgingStarts < ends) errors.push("Judging cannot start before the competition ends.");
-  if (judgingStarts && judgingEnds && judgingEnds <= judgingStarts) errors.push("Judging end must be later than judging start.");
-  if (resultsAt && judgingEnds && resultsAt < judgingEnds) errors.push("Results cannot be published before judging ends.");
+  if (starts && ends && ends <= starts) errors.push(t("builder.validation.endAfterStart"));
+  if (registrationStarts && starts && registrationStarts > starts) errors.push(t("builder.validation.registrationBeforeStart"));
+  if (registrationEnds && starts && registrationEnds > starts) errors.push(t("builder.validation.registrationEndBeforeStart"));
+  if (registrationStarts && registrationEnds && registrationEnds <= registrationStarts) errors.push(t("builder.validation.registrationEndAfterStart"));
+  if (judgingStarts && ends && judgingStarts < ends) errors.push(t("builder.validation.judgingAfterCompetition"));
+  if (judgingStarts && judgingEnds && judgingEnds <= judgingStarts) errors.push(t("builder.validation.judgingEndAfterStart"));
+  if (resultsAt && judgingEnds && resultsAt < judgingEnds) errors.push(t("builder.validation.resultsAfterJudging"));
 
   let previousRoundEnd = null;
   (draft.rounds || []).forEach((round, index) => {
@@ -253,11 +246,11 @@ function getScheduleErrors(draft) {
     const roundEnd = timeValue(round.ends_at);
     const effectiveRoundStart = roundStart || (previousRoundEnd ? previousRoundEnd + 1000 : starts);
     const label = round.title || `Round ${index + 1}`;
-    if (effectiveRoundStart && starts && effectiveRoundStart < starts) errors.push(`${label}: round must start within the competition window.`);
-    if (roundEnd && ends && roundEnd > ends) errors.push(`${label}: round must end within the competition window.`);
-    if (effectiveRoundStart && roundEnd && roundEnd <= effectiveRoundStart) errors.push(`${label}: round end must be later than round start.`);
-    if (previousRoundEnd && effectiveRoundStart && effectiveRoundStart <= previousRoundEnd) errors.push(`${label}: next round must start after the previous round ends.`);
-    if (previousRoundEnd && roundEnd && roundEnd <= previousRoundEnd) errors.push(`${label}: next round must end after the previous round ends.`);
+    if (effectiveRoundStart && starts && effectiveRoundStart < starts) errors.push(t("builder.validation.roundWithinWindow", { label }));
+    if (roundEnd && ends && roundEnd > ends) errors.push(t("builder.validation.roundEndWithinWindow", { label }));
+    if (effectiveRoundStart && roundEnd && roundEnd <= effectiveRoundStart) errors.push(t("builder.validation.roundEndAfterStart", { label }));
+    if (previousRoundEnd && effectiveRoundStart && effectiveRoundStart <= previousRoundEnd) errors.push(t("builder.validation.nextRoundAfterPrevious", { label }));
+    if (previousRoundEnd && roundEnd && roundEnd <= previousRoundEnd) errors.push(t("builder.validation.nextRoundEndAfterPrevious", { label }));
     if (roundEnd) previousRoundEnd = roundEnd;
   });
 
@@ -287,8 +280,23 @@ export default function CompetitionBuilderPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { isAuthenticated, loading, user } = useAuth();
+  const { t } = useLanguage();
+  const steps = [
+    { id: 1, title: t("builder.steps.basics"), hint: t("builder.steps.basicsHint") },
+    { id: 2, title: t("builder.steps.format"), hint: t("builder.steps.formatHint") },
+    { id: 3, title: t("builder.steps.schedule"), hint: t("builder.steps.scheduleHint") },
+    { id: 4, title: t("builder.steps.submissions"), hint: t("builder.steps.submissionsHint") },
+    { id: 5, title: t("builder.steps.publish"), hint: t("builder.steps.publishHint") },
+  ];
+  const localizedDefaultDraft = useMemo(() => ({
+    ...defaultDraft,
+    name: t("builder.defaults.untitled"),
+    rounds: [{ ...defaultDraft.rounds[0], title: t("builder.defaults.round", { number: 1 }) }],
+    judging_criteria: [{ ...defaultDraft.judging_criteria[0], title: t("builder.defaults.quality") }],
+    awards: [{ ...defaultDraft.awards[0], title: t("builder.defaults.winner") }],
+  }), [t]);
   const [step, setStep] = useState(1);
-  const [draft, setDraft] = useState(defaultDraft);
+  const [draft, setDraft] = useState(localizedDefaultDraft);
   const [competitionId, setCompetitionId] = useState(id || null);
   const [statusText, setStatusText] = useState("");
   const [inviteText, setInviteText] = useState("");
@@ -316,7 +324,7 @@ export default function CompetitionBuilderPage() {
     } else {
       if (draftCreationStartedRef.current) return;
       draftCreationStartedRef.current = true;
-      createCompetitionDraft(preparePayload(defaultDraft, 1)).then((data) => {
+      createCompetitionDraft(preparePayload(localizedDefaultDraft, 1)).then((data) => {
         setCompetitionId(data.id);
         setDraft(normalizeDraft(data));
         return Promise.all([fetchCompetitionJudges(data.id), fetchCompetitionMaterials(data.id)]).then(([judgeItems, materialItems]) => {
@@ -331,7 +339,7 @@ export default function CompetitionBuilderPage() {
         setStatusText(error.message);
       });
     }
-  }, [id, isAuthenticated, navigate]);
+  }, [id, isAuthenticated, localizedDefaultDraft, navigate]);
 
   const setField = (field, value) => setDraft((prev) => ({ ...prev, [field]: value }));
   const setNested = (section, field, value) => setDraft((prev) => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
@@ -359,15 +367,15 @@ export default function CompetitionBuilderPage() {
   const saveDraft = async (nextStep = step) => {
     if (!competitionId || saving) return null;
     setSaving(true);
-    setStatusText("Saving draft...");
+    setStatusText(t("builder.status.saving"));
     try {
       const saved = await saveCompetitionBuilder(competitionId, preparePayload(draft, nextStep));
       setDraft(normalizeDraft(saved));
       setStep(nextStep);
-      setStatusText("Draft saved");
+      setStatusText(t("builder.status.saved"));
       return saved;
     } catch (error) {
-      setStatusText(error.message || "Draft was not saved");
+      setStatusText(error.message || t("builder.status.notSaved"));
       return null;
     } finally {
       setSaving(false);
@@ -376,16 +384,16 @@ export default function CompetitionBuilderPage() {
 
   const validation = useMemo(() => {
     const missing = [];
-    if (!draft.name || draft.name === "Untitled competition") missing.push("competition title");
-    if (!draft.short_description) missing.push("short description");
-    if (!draft.ends_at) missing.push("competition end");
-    if (!draft.rounds?.length) missing.push("at least one round");
-    if ((draft.rounds || []).some((round) => !round.ends_at)) missing.push("round end time");
-    if (draft.access_mode === "invite_only" && !draft.allow_sharing_link) missing.push("sharing link or invitations");
-    return [...missing, ...getScheduleErrors(draft)];
-  }, [draft]);
+    if (!draft.name || draft.name === "Untitled competition" || draft.name === t("builder.defaults.untitled")) missing.push(t("builder.validation.title"));
+    if (!draft.short_description) missing.push(t("builder.validation.shortDescription"));
+    if (!draft.ends_at) missing.push(t("builder.validation.competitionEnd"));
+    if (!draft.rounds?.length) missing.push(t("builder.validation.oneRound"));
+    if ((draft.rounds || []).some((round) => !round.ends_at)) missing.push(t("builder.validation.roundEnd"));
+    if (draft.access_mode === "invite_only" && !draft.allow_sharing_link) missing.push(t("builder.validation.sharingOrInvitations"));
+    return [...missing, ...getScheduleErrors(draft, t)];
+  }, [draft, t]);
 
-  const scheduleErrors = useMemo(() => getScheduleErrors(draft), [draft]);
+  const scheduleErrors = useMemo(() => getScheduleErrors(draft, t), [draft, t]);
   const approvalStatus = draft.organizer_approval_status || "pending";
   const canPublishFromApproval = user?.primaryRole === "admin" || approvalStatus !== "rejected";
 
@@ -396,10 +404,10 @@ export default function CompetitionBuilderPage() {
     try {
       const published = await publishCompetition(competitionId);
       setDraft(normalizeDraft(published));
-      setStatusText("Competition published");
+      setStatusText(t("builder.status.published"));
       navigate(`/competitions/${published.id || competitionId}`);
     } catch (error) {
-      setStatusText(error.message || "Competition was not published");
+      setStatusText(error.message || t("builder.status.notPublished"));
     }
   };
 
@@ -411,14 +419,14 @@ export default function CompetitionBuilderPage() {
       await createCompetitionInvitations(competitionId, {
         recipients,
         target_type: targetType,
-        team_name: targetType === "team" ? "Invited team" : "",
+        team_name: targetType === "team" ? t("builder.defaults.invitedTeam") : "",
         message: `You are invited to join ${draft.name}.`,
         queue_messages: true,
       });
-      setStatusText("Invitations queued as outbound messages");
+      setStatusText(t("builder.status.invitesQueued"));
       if (targetType === "team") setTeamInviteText(""); else setInviteText("");
     } catch (error) {
-      setStatusText(error.message || "Invitations were not queued");
+      setStatusText(error.message || t("builder.status.invitesFailed"));
     }
   };
 
@@ -430,9 +438,9 @@ export default function CompetitionBuilderPage() {
       const items = await fetchCompetitionJudges(competitionId);
       setJudges(items || []);
       setJudgeText("");
-      setStatusText("Jury member assigned");
+      setStatusText(t("builder.status.judgeAssigned"));
     } catch (error) {
-      setStatusText(error.message || "Jury member was not assigned");
+      setStatusText(error.message || t("builder.status.judgeFailed"));
     }
   };
 
@@ -455,9 +463,9 @@ export default function CompetitionBuilderPage() {
       setMaterialFile(null);
       setMaterialName("");
       setMaterialUrl("");
-      setStatusText("Material uploaded");
+      setStatusText(t("builder.status.materialUploaded"));
     } catch (error) {
-      setStatusText(error.message || "Material was not uploaded");
+      setStatusText(error.message || t("builder.status.materialFailed"));
     }
   };
 
@@ -466,29 +474,29 @@ export default function CompetitionBuilderPage() {
     try {
       await deleteCompetitionMaterial(competitionId, materialId);
       await refreshMaterials();
-      setStatusText("Material removed");
+      setStatusText(t("builder.status.materialRemoved"));
     } catch (error) {
-      setStatusText(error.message || "Material was not removed");
+      setStatusText(error.message || t("builder.status.materialRemoveFailed"));
     }
   };
 
-  if (loading) return <div className="builder-page"><main className="builder-shell">Loading...</main></div>;
+  if (loading) return <div className="builder-page"><main className="builder-shell">{t("builder.loading")}</main></div>;
   if (!isAuthenticated) return <Navigate to="/" replace />;
 
   return (
     <div className="builder-page">
       <main className="builder-shell">
         <div className="builder-topbar">
-          <button type="button" onClick={() => navigate("/profile")}>Profile</button>
-          <div><strong>Competition constructor</strong><span>{statusText}</span></div>
-          <div className="builder-topbar-actions"><button type="button" onClick={() => saveDraft(step)} disabled={saving}>Save draft</button><AccountSwitcher compact /></div>
+          <button type="button" onClick={() => navigate("/profile")}>{t("builder.topbarProfile")}</button>
+          <div><strong>{t("builder.constructor")}</strong><span>{statusText}</span></div>
+          <div className="builder-topbar-actions"><button type="button" onClick={() => saveDraft(step)} disabled={saving}>{t("builder.saveDraft")}</button><AccountSwitcher compact /></div>
         </div>
 
         <section className="builder-hero">
           <div>
-            <span className="profile-section-kicker">Step {step} of 5</span>
-            <h1>{draft.name || "New competition"}</h1>
-            <p>One draft is updated through the whole setup flow. The same fields feed catalog filters, cards, profile blocks and participation rules.</p>
+            <span className="profile-section-kicker">{t("builder.stepOf", { step })}</span>
+            <h1>{draft.name || t("builder.newCompetition")}</h1>
+            <p>{t("builder.heroText")}</p>
           </div>
           <div className="builder-progress"><i style={{ width: `${Math.min(100, step * 20)}%` }} /></div>
         </section>
@@ -505,42 +513,42 @@ export default function CompetitionBuilderPage() {
           <section className="builder-panel">
             {step === 1 && (
               <div className="builder-form-grid">
-                <Field label="Title"><input value={draft.name} onChange={(e) => setField("name", e.target.value)} /></Field>
-                <Field label="Category / industry" note="Directly used in catalog filters"><select value={draft.industry} onChange={(e) => setField("industry", e.target.value)}><option value="programming">Programming</option><option value="design">Design</option><option value="robotics">Robotics</option><option value="cybersecurity">Cybersecurity</option></select></Field>
-                <Field label="Event type"><select value={draft.event_type} onChange={(e) => setField("event_type", e.target.value)}><option value="online">Online</option><option value="offline">Offline</option><option value="hybrid">Hybrid</option></select></Field>
-                <Field label="Difficulty"><select value={draft.difficulty} onChange={(e) => setField("difficulty", e.target.value)}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option><option value="mixed">Mixed</option></select></Field>
-                <Field label="Language" note="Used in landing filters"><select value={draft.language} onChange={(e) => setField("language", e.target.value)}><option value="uk">Ukrainian</option><option value="en">English</option><option value="pl">Polish</option><option value="de">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="other">Other</option></select></Field>
-                <Field label="Short description"><textarea value={draft.short_description} onChange={(e) => setField("short_description", e.target.value)} /></Field>
-                <Field label="Full description"><textarea value={draft.full_description} onChange={(e) => setField("full_description", e.target.value)} /></Field>
-                <Field label="Cover image URL"><input value={draft.cover_image || ""} onChange={(e) => setField("cover_image", e.target.value)} /></Field>
-                <Field label="Banner image URL"><input value={draft.banner_image || ""} onChange={(e) => setField("banner_image", e.target.value)} /></Field>
+                <Field label={t("builder.title")}><input value={draft.name} onChange={(e) => setField("name", e.target.value)} /></Field>
+                <Field label={t("builder.categoryIndustry")} note={t("builder.categoryNote")}><select value={draft.industry} onChange={(e) => setField("industry", e.target.value)}><option value="programming">{t("options.industry.programming")}</option><option value="design">{t("options.industry.design")}</option><option value="robotics">{t("options.industry.robotics")}</option><option value="cybersecurity">{t("options.industry.cybersecurity")}</option></select></Field>
+                <Field label={t("builder.eventType")}><select value={draft.event_type} onChange={(e) => setField("event_type", e.target.value)}><option value="online">{t("options.event_type.online")}</option><option value="offline">{t("options.event_type.offline")}</option><option value="hybrid">{t("options.event_type.hybrid")}</option></select></Field>
+                <Field label={t("builder.difficulty")}><select value={draft.difficulty} onChange={(e) => setField("difficulty", e.target.value)}><option value="beginner">{t("options.difficulty.beginner")}</option><option value="intermediate">{t("options.difficulty.intermediate")}</option><option value="advanced">{t("options.difficulty.advanced")}</option><option value="mixed">{t("options.difficulty.mixed")}</option></select></Field>
+                <Field label={t("builder.language")} note={t("builder.languageNote")}><select value={draft.language} onChange={(e) => setField("language", e.target.value)}><option value="uk">{t("options.language.uk")}</option><option value="en">{t("options.language.en")}</option><option value="pl">{t("options.language.pl")}</option><option value="de">{t("options.language.de")}</option><option value="fr">{t("options.language.fr")}</option><option value="es">{t("options.language.es")}</option><option value="other">{t("options.language.other")}</option></select></Field>
+                <Field label={t("builder.shortDescription")}><textarea value={draft.short_description} onChange={(e) => setField("short_description", e.target.value)} /></Field>
+                <Field label={t("builder.fullDescription")}><textarea value={draft.full_description} onChange={(e) => setField("full_description", e.target.value)} /></Field>
+                <Field label={t("builder.coverImage")}><input value={draft.cover_image || ""} onChange={(e) => setField("cover_image", e.target.value)} /></Field>
+                <Field label={t("builder.bannerImage")}><input value={draft.banner_image || ""} onChange={(e) => setField("banner_image", e.target.value)} /></Field>
               </div>
             )}
 
             {step === 2 && (
               <div className="builder-stack">
-                <h2>Registration and distribution model</h2>
+                <h2>{t("builder.registrationModel")}</h2>
                 <div className="builder-choice-grid">
-                  <ToggleCard active={draft.access_mode === "open"} title="Open registration" text="Join immediately creates approved participation." onClick={() => setField("access_mode", "open")} />
-                  <ToggleCard active={draft.access_mode === "application"} title="Application review" text="Join creates pending request until organizer/admin approves." onClick={() => setField("access_mode", "application")} />
-                  <ToggleCard active={draft.access_mode === "invite_only"} title="Invite only" text="Users join through organizer invitations; hidden competitions may use private links." onClick={() => setField("access_mode", "invite_only")} />
+                  <ToggleCard active={draft.access_mode === "open"} title={t("options.access_mode.open")} text={t("builder.openRegistrationText")} onClick={() => setField("access_mode", "open")} />
+                  <ToggleCard active={draft.access_mode === "application"} title={t("options.access_mode.application")} text={t("builder.applicationReviewText")} onClick={() => setField("access_mode", "application")} />
+                  <ToggleCard active={draft.access_mode === "invite_only"} title={t("options.access_mode.invite_only")} text={t("builder.inviteOnlyText")} onClick={() => setField("access_mode", "invite_only")} />
                 </div>
                 <div className="builder-choice-grid">
-                  <ToggleCard active={draft.participation_type === "individual"} title="Individual" text="Each participant submits independently." onClick={() => setField("participation_type", "individual")} />
-                  <ToggleCard active={draft.participation_type === "team"} title="Team" text="Registered participants join or create teams; organizers manage the competition only." onClick={() => setField("participation_type", "team")} />
-                  <ToggleCard active={draft.participation_type === "mixed"} title="Mixed" text="Individual and team participation are both allowed." onClick={() => setField("participation_type", "mixed")} />
+                  <ToggleCard active={draft.participation_type === "individual"} title={t("options.participation_type.individual")} text={t("builder.individualText")} onClick={() => setField("participation_type", "individual")} />
+                  <ToggleCard active={draft.participation_type === "team"} title={t("options.participation_type.team")} text={t("builder.teamText")} onClick={() => setField("participation_type", "team")} />
+                  <ToggleCard active={draft.participation_type === "mixed"} title={t("options.participation_type.mixed")} text={t("builder.mixedText")} onClick={() => setField("participation_type", "mixed")} />
                 </div>
                 <div className="builder-form-grid">
-                  <Field label="Visibility"><select value={draft.visibility_mode} onChange={(e) => setField("visibility_mode", e.target.value)}><option value="public">Public catalog</option><option value="unlisted">Unlisted link</option><option value="private">Private</option></select></Field>
-                  <CheckField label="Show in catalog" checked={draft.show_in_catalog} onChange={(value) => setField("show_in_catalog", value)} />
-                  <CheckField label="Allow sharing link" checked={draft.allow_sharing_link} onChange={(value) => setField("allow_sharing_link", value)} />
-                  <CheckField label="External registration" checked={draft.allow_external_registration} onChange={(value) => setField("allow_external_registration", value)} />
+                  <Field label={t("builder.visibility")}><select value={draft.visibility_mode} onChange={(e) => setField("visibility_mode", e.target.value)}><option value="public">{t("options.visibility_mode.public")}</option><option value="unlisted">{t("options.visibility_mode.unlisted")}</option><option value="private">{t("options.visibility_mode.private")}</option></select></Field>
+                  <CheckField label={t("builder.showCatalog")} checked={draft.show_in_catalog} onChange={(value) => setField("show_in_catalog", value)} />
+                  <CheckField label={t("builder.allowSharing")} checked={draft.allow_sharing_link} onChange={(value) => setField("allow_sharing_link", value)} />
+                  <CheckField label={t("builder.externalRegistration")} checked={draft.allow_external_registration} onChange={(value) => setField("allow_external_registration", value)} />
                   {draft.participation_type !== "individual" && (
                     <>
-                      <Field label="Min team size"><input type="number" min="1" value={draft.min_team_size} onChange={(e) => setField("min_team_size", Number(e.target.value))} /></Field>
-                      <Field label="Max team size"><input type="number" min="1" value={draft.max_team_size} onChange={(e) => setField("max_team_size", Number(e.target.value))} /></Field>
-                      <CheckField label="Participant team invites" checked={draft.allow_user_team_invites} onChange={(value) => setField("allow_user_team_invites", value)} />
-                      <CheckField label="Organizer team assignment" checked={draft.allow_organizer_team_assignment} onChange={(value) => setField("allow_organizer_team_assignment", value)} />
+                      <Field label={t("builder.minTeam")}><input type="number" min="1" value={draft.min_team_size} onChange={(e) => setField("min_team_size", Number(e.target.value))} /></Field>
+                      <Field label={t("builder.maxTeam")}><input type="number" min="1" value={draft.max_team_size} onChange={(e) => setField("max_team_size", Number(e.target.value))} /></Field>
+                      <CheckField label={t("builder.participantInvites")} checked={draft.allow_user_team_invites} onChange={(value) => setField("allow_user_team_invites", value)} />
+                      <CheckField label={t("builder.organizerAssignment")} checked={draft.allow_organizer_team_assignment} onChange={(value) => setField("allow_organizer_team_assignment", value)} />
                     </>
                   )}
                 </div>
@@ -549,16 +557,16 @@ export default function CompetitionBuilderPage() {
 
             {step === 3 && (
               <div className="builder-stack">
-                <h2>Schedule and rounds</h2>
-                <p className="builder-muted">Competition status, timers and catalog tabs are derived from these time windows and round dates.</p>
+                <h2>{t("builder.scheduleRounds")}</h2>
+                <p className="builder-muted">{t("builder.scheduleText")}</p>
                 <div className="builder-form-grid">
-                  <Field label="Registration starts"><input type="datetime-local" value={draft.registration_starts_at || ""} onChange={(e) => setField("registration_starts_at", e.target.value)} /></Field>
-                  <Field label="Registration ends"><input type="datetime-local" value={draft.registration_ends_at || ""} onChange={(e) => setField("registration_ends_at", e.target.value)} /></Field>
-                  <Field label="Competition starts" note="Optional: if empty, the competition starts when you publish it."><input type="datetime-local" value={draft.starts_at || ""} onChange={(e) => setField("starts_at", e.target.value)} /></Field>
-                  <Field label="Competition ends"><input type="datetime-local" value={draft.ends_at || ""} onChange={(e) => setField("ends_at", e.target.value)} /></Field>
-                  <Field label="Judging starts"><input type="datetime-local" value={draft.judging_starts_at || ""} onChange={(e) => setField("judging_starts_at", e.target.value)} /></Field>
-                  <Field label="Judging ends"><input type="datetime-local" value={draft.judging_ends_at || ""} onChange={(e) => setField("judging_ends_at", e.target.value)} /></Field>
-                  <Field label="Results public at"><input type="datetime-local" value={draft.results_public_at || ""} onChange={(e) => setField("results_public_at", e.target.value)} /></Field>
+                  <Field label={t("builder.registrationStarts")}><input type="datetime-local" value={draft.registration_starts_at || ""} onChange={(e) => setField("registration_starts_at", e.target.value)} /></Field>
+                  <Field label={t("builder.registrationEnds")}><input type="datetime-local" value={draft.registration_ends_at || ""} onChange={(e) => setField("registration_ends_at", e.target.value)} /></Field>
+                  <Field label={t("builder.competitionStarts")} note={t("builder.competitionStartsNote")}><input type="datetime-local" value={draft.starts_at || ""} onChange={(e) => setField("starts_at", e.target.value)} /></Field>
+                  <Field label={t("builder.competitionEnds")}><input type="datetime-local" value={draft.ends_at || ""} onChange={(e) => setField("ends_at", e.target.value)} /></Field>
+                  <Field label={t("builder.judgingStarts")}><input type="datetime-local" value={draft.judging_starts_at || ""} onChange={(e) => setField("judging_starts_at", e.target.value)} /></Field>
+                  <Field label={t("builder.judgingEnds")}><input type="datetime-local" value={draft.judging_ends_at || ""} onChange={(e) => setField("judging_ends_at", e.target.value)} /></Field>
+                  <Field label={t("builder.resultsPublic")}><input type="datetime-local" value={draft.results_public_at || ""} onChange={(e) => setField("results_public_at", e.target.value)} /></Field>
                 </div>
 
                 {scheduleErrors.length > 0 && (
@@ -567,88 +575,88 @@ export default function CompetitionBuilderPage() {
                   </div>
                 )}
 
-                <h2>Rounds</h2>
+                <h2>{t("builder.rounds")}</h2>
                 {draft.rounds.map((round, index) => (
                   <div className="builder-inline-card builder-round-card" key={index}>
                     <div className="builder-round-card-head">
-                      <strong>Round {index + 1}</strong>
+                      <strong>{t("builder.defaults.round", { number: index + 1 })}</strong>
                       <button
                         type="button"
                         className="builder-danger-btn"
                         onClick={() => removeArrayItem("rounds", index)}
                         disabled={draft.rounds.length <= 1}
                       >
-                        Delete
+                        {t("builder.delete")}
                       </button>
                     </div>
-                    <input value={round.title} onChange={(e) => updateArrayItem("rounds", index, "title", e.target.value)} placeholder="Round title" />
-                    <input type="datetime-local" value={round.starts_at || ""} onChange={(e) => updateArrayItem("rounds", index, "starts_at", e.target.value)} title="Optional for the first/next sequential round; empty start is derived on publication." />
+                    <input value={round.title} onChange={(e) => updateArrayItem("rounds", index, "title", e.target.value)} placeholder={t("builder.roundTitle")} />
+                    <input type="datetime-local" value={round.starts_at || ""} onChange={(e) => updateArrayItem("rounds", index, "starts_at", e.target.value)} title={t("builder.roundTimeTitle")} />
                     <input type="datetime-local" value={round.ends_at || ""} onChange={(e) => updateArrayItem("rounds", index, "ends_at", e.target.value)} />
-                    <label className="builder-round-check"><input type="checkbox" checked={Boolean(round.submission_required)} onChange={(e) => updateArrayItem("rounds", index, "submission_required", e.target.checked)} /> Submission required</label>
-                    <label className="builder-round-check"><input type="checkbox" checked={Boolean(round.is_stream_enabled)} onChange={(e) => updateArrayItem("rounds", index, "is_stream_enabled", e.target.checked)} /> Show video stream</label>
+                    <label className="builder-round-check"><input type="checkbox" checked={Boolean(round.submission_required)} onChange={(e) => updateArrayItem("rounds", index, "submission_required", e.target.checked)} /> {t("builder.submissionRequired")}</label>
+                    <label className="builder-round-check"><input type="checkbox" checked={Boolean(round.is_stream_enabled)} onChange={(e) => updateArrayItem("rounds", index, "is_stream_enabled", e.target.checked)} /> {t("builder.showVideo")}</label>
                     {round.is_stream_enabled && (
                       <>
-                        <input value={round.stream_label || ""} onChange={(e) => updateArrayItem("rounds", index, "stream_label", e.target.value)} placeholder="Stream label, e.g. Round briefing" />
+                        <input value={round.stream_label || ""} onChange={(e) => updateArrayItem("rounds", index, "stream_label", e.target.value)} placeholder={t("builder.streamLabel")} />
                         <input
                           value={round.stream_url || ""}
                           onChange={(e) => updateArrayItem("rounds", index, "stream_url", e.target.value)}
                           onBlur={(e) => updateArrayItem("rounds", index, "stream_url", normalizeStreamInput(e.target.value))}
-                          placeholder="Stream URL: YouTube, Vimeo or Twitch"
+                          placeholder={t("builder.streamUrl")}
                         />
-                        <small className="builder-stream-hint">Insert one normal stream link. YouTube, youtu.be, Vimeo, Twitch channel/video links are converted to an embedded player automatically. Do not paste iframe code.</small>
+                        <small className="builder-stream-hint">{t("builder.streamHint")}</small>
                       </>
                     )}
-                    <textarea value={round.description || ""} onChange={(e) => updateArrayItem("rounds", index, "description", e.target.value)} placeholder="Round description" />
+                    <textarea value={round.description || ""} onChange={(e) => updateArrayItem("rounds", index, "description", e.target.value)} placeholder={t("builder.roundDescription")} />
                   </div>
                 ))}
-                <button type="button" onClick={() => addArrayItem("rounds", { title: `Round ${draft.rounds.length + 1}`, description: "", starts_at: "", ends_at: "", submission_required: true, max_attempts: 1, is_stream_enabled: false, stream_url: "", stream_embed_url: "", stream_label: "" })}>+ Add round</button>
+                <button type="button" onClick={() => addArrayItem("rounds", { title: t("builder.defaults.round", { number: draft.rounds.length + 1 }), description: "", starts_at: "", ends_at: "", submission_required: true, max_attempts: 1, is_stream_enabled: false, stream_url: "", stream_embed_url: "", stream_label: "" })}>+ {t("builder.addRound")}</button>
               </div>
             )}
 
             {step === 4 && (
               <div className="builder-stack">
-                <h2>Submission settings</h2>
+                <h2>{t("builder.submissionSettings")}</h2>
                 <div className="builder-form-grid">
-                  <Field label="Submission mode"><select value={draft.submission_settings.submission_mode} onChange={(e) => setNested("submission_settings", "submission_mode", e.target.value)}><option value="file_upload">File upload</option><option value="text_answer">Text answer</option><option value="repository_link">Repository link</option><option value="demo_link">Demo link</option><option value="mixed">Mixed</option></select></Field>
-                  <Field label="Max file size, MB"><input type="number" value={draft.submission_settings.max_file_size_mb} onChange={(e) => setNested("submission_settings", "max_file_size_mb", Number(e.target.value))} /></Field>
-                  <Field label="Max submissions"><input type="number" value={draft.submission_settings.max_submissions} onChange={(e) => setNested("submission_settings", "max_submissions", Number(e.target.value))} /></Field>
-                  <CheckField label="Repository required" checked={draft.submission_settings.repository_url_required} onChange={(value) => setNested("submission_settings", "repository_url_required", value)} />
-                  <CheckField label="Demo required" checked={draft.submission_settings.demo_url_required} onChange={(value) => setNested("submission_settings", "demo_url_required", value)} />
+                  <Field label={t("builder.submissionMode")}><select value={draft.submission_settings.submission_mode} onChange={(e) => setNested("submission_settings", "submission_mode", e.target.value)}><option value="file_upload">{t("options.submission_mode.file_upload")}</option><option value="text_answer">{t("options.submission_mode.text_answer")}</option><option value="repository_link">{t("options.submission_mode.repository_link")}</option><option value="demo_link">{t("options.submission_mode.demo_link")}</option><option value="mixed">{t("options.submission_mode.mixed")}</option></select></Field>
+                  <Field label={t("builder.maxFileSize")}><input type="number" value={draft.submission_settings.max_file_size_mb} onChange={(e) => setNested("submission_settings", "max_file_size_mb", Number(e.target.value))} /></Field>
+                  <Field label={t("builder.maxSubmissions")}><input type="number" value={draft.submission_settings.max_submissions} onChange={(e) => setNested("submission_settings", "max_submissions", Number(e.target.value))} /></Field>
+                  <CheckField label={t("builder.repositoryRequired")} checked={draft.submission_settings.repository_url_required} onChange={(value) => setNested("submission_settings", "repository_url_required", value)} />
+                  <CheckField label={t("builder.demoRequired")} checked={draft.submission_settings.demo_url_required} onChange={(value) => setNested("submission_settings", "demo_url_required", value)} />
                 </div>
 
-                <h2>Competition materials</h2>
+                <h2>{t("builder.materials")}</h2>
                 <div className="builder-form-grid">
-                  <Field label="Material title"><input value={materialName} onChange={(e) => setMaterialName(e.target.value)} placeholder="Rules, starter kit, dataset" /></Field>
-                  <Field label="Material type"><select value={materialType} onChange={(e) => setMaterialType(e.target.value)}><option value="rules">Rules</option><option value="dataset">Dataset</option><option value="template">Template</option><option value="guide">Guide</option><option value="other">Other</option></select></Field>
-                  <Field label="Upload file"><input type="file" onChange={(e) => setMaterialFile(e.target.files?.[0] || null)} /></Field>
-                  <Field label="External URL"><input value={materialUrl} onChange={(e) => setMaterialUrl(e.target.value)} placeholder="https://..." /></Field>
+                  <Field label={t("builder.materialTitle")}><input value={materialName} onChange={(e) => setMaterialName(e.target.value)} placeholder={t("builder.materialPlaceholder")} /></Field>
+                  <Field label={t("builder.materialType")}><select value={materialType} onChange={(e) => setMaterialType(e.target.value)}><option value="rules">{t("options.material_type.rules")}</option><option value="dataset">{t("options.material_type.dataset")}</option><option value="template">{t("options.material_type.template")}</option><option value="guide">{t("options.material_type.guide")}</option><option value="other">{t("options.material_type.other")}</option></select></Field>
+                  <Field label={t("builder.uploadFile")}><input type="file" onChange={(e) => setMaterialFile(e.target.files?.[0] || null)} /></Field>
+                  <Field label={t("builder.externalUrl")}><input value={materialUrl} onChange={(e) => setMaterialUrl(e.target.value)} placeholder="https://..." /></Field>
                 </div>
-                <button type="button" onClick={uploadMaterial}>Add material</button>
+                <button type="button" onClick={uploadMaterial}>{t("builder.addMaterial")}</button>
                 {(draft.materials || []).length > 0 && (
                   <div className="builder-inline-card">
                     {(draft.materials || []).map((material) => (
                       <span key={material.id}>
                         <a href={material.url || "#"} target="_blank" rel="noreferrer">{material.name}</a> · {material.material_type}
-                        <button type="button" onClick={() => removeMaterial(material.id)}>Remove</button>
+                        <button type="button" onClick={() => removeMaterial(material.id)}>{t("builder.remove")}</button>
                       </span>
                     ))}
                   </div>
                 )}
 
-                <h2>Judging criteria</h2>
+                <h2>{t("builder.criteria")}</h2>
                 {draft.judging_criteria.map((criterion, index) => <div className="builder-inline-card" key={index}><input value={criterion.title} onChange={(e) => updateArrayItem("judging_criteria", index, "title", e.target.value)} /><input type="number" value={criterion.max_score} onChange={(e) => updateArrayItem("judging_criteria", index, "max_score", Number(e.target.value))} /><input type="number" step="0.1" value={criterion.weight} onChange={(e) => updateArrayItem("judging_criteria", index, "weight", Number(e.target.value))} /></div>)}
-                <button type="button" onClick={() => addArrayItem("judging_criteria", { title: "New criterion", description: "", max_score: 10, weight: 1 })}>+ Add criterion</button>
+                <button type="button" onClick={() => addArrayItem("judging_criteria", { title: t("builder.defaults.newCriterion"), description: "", max_score: 10, weight: 1 })}>+ {t("builder.addCriterion")}</button>
 
-                <h2>Jury assignment</h2>
+                <h2>{t("builder.jury")}</h2>
                 <div className="builder-form-grid">
-                  <Field label="Judge email"><input type="email" value={judgeText} onChange={(e) => setJudgeText(e.target.value)} placeholder="judge@example.com" /></Field>
+                  <Field label={t("builder.judgeEmail")}><input type="email" value={judgeText} onChange={(e) => setJudgeText(e.target.value)} placeholder="judge@example.com" /></Field>
                 </div>
-                <button type="button" onClick={assignJudge}>Assign jury member</button>
-                {judges.length > 0 && <div className="builder-inline-card">{judges.map((judge) => <span key={judge.id}>{judge.display_name || judge.user_name || "Judge"} · {judge.status}</span>)}</div>}
+                <button type="button" onClick={assignJudge}>{t("builder.assignJudge")}</button>
+                {judges.length > 0 && <div className="builder-inline-card">{judges.map((judge) => <span key={judge.id}>{judge.display_name || judge.user_name || t("builder.judgeFallback")} - {t(`options.status.${judge.status}`, { defaultValue: judge.status })}</span>)}</div>}
 
-                <h2>Awards</h2>
+                <h2>{t("builder.awards")}</h2>
                 {draft.awards.map((award, index) => <div className="builder-inline-card" key={index}><input value={award.title} onChange={(e) => updateArrayItem("awards", index, "title", e.target.value)} /><input type="number" value={award.place || ""} onChange={(e) => updateArrayItem("awards", index, "place", Number(e.target.value))} /></div>)}
-                <button type="button" onClick={() => addArrayItem("awards", { title: "Special award", place: null, issue_certificate: true, issue_badge: true })}>+ Add award</button>
+                <button type="button" onClick={() => addArrayItem("awards", { title: t("builder.defaults.specialAward"), place: null, issue_certificate: true, issue_badge: true })}>+ {t("builder.addAward")}</button>
               </div>
             )}
 
@@ -656,30 +664,30 @@ export default function CompetitionBuilderPage() {
               <div className="builder-stack">
                 <section className="builder-preview-card">
                   <div style={draft.cover_image ? { backgroundImage: `url(${draft.cover_image})` } : undefined} />
-                  <article><span>{draft.industry} · {draft.participation_type} · {draft.access_mode} · {String(draft.language || "uk").toUpperCase()}</span><h2>{draft.name}</h2><p>{draft.short_description || "No short description yet."}</p></article>
+                  <article><span>{t(`options.industry.${draft.industry}`, { defaultValue: draft.industry })} - {t(`options.participation_type.${draft.participation_type}`, { defaultValue: draft.participation_type })} - {t(`options.access_mode.${draft.access_mode}`, { defaultValue: draft.access_mode })} - {String(draft.language || "uk").toUpperCase()}</span><h2>{draft.name}</h2><p>{draft.short_description || t("builder.noShort")}</p></article>
                 </section>
                 <section className="builder-validation">
-                  <h2>Validation</h2>
-                  {validation.length ? <p>Fix before publication: {validation.join(", ")}</p> : <p>Required publication fields are filled.</p>}
-                  {approvalStatus === "rejected" && <p>Administrator review rejected this competition. It cannot be published until it is reviewed again.</p>}
+                  <h2>{t("builder.validationTitle")}</h2>
+                  {validation.length ? <p>{t("builder.fixBefore", { items: validation.join(", ") })}</p> : <p>{t("builder.requiredFilled")}</p>}
+                  {approvalStatus === "rejected" && <p>{t("builder.rejected")}</p>}
                 </section>
                 <section className="builder-invites">
-                  <h2>Invitation infrastructure</h2>
-                  <p>Invitations create records in the invitation table and queue outbound email messages. A real provider can later process the queued messages.</p>
+                  <h2>{t("builder.invitations")}</h2>
+                  <p>{t("builder.invitationsText")}</p>
                   <div className="builder-form-grid">
-                    <Field label="Individual emails"><textarea value={inviteText} onChange={(e) => setInviteText(e.target.value)} placeholder="one@email.com, two@email.com" /></Field>
-                    <Field label="Team emails"><textarea value={teamInviteText} onChange={(e) => setTeamInviteText(e.target.value)} placeholder="captain@email.com" /></Field>
+                    <Field label={t("builder.individualEmails")}><textarea value={inviteText} onChange={(e) => setInviteText(e.target.value)} placeholder="one@email.com, two@email.com" /></Field>
+                    <Field label={t("builder.teamEmails")}><textarea value={teamInviteText} onChange={(e) => setTeamInviteText(e.target.value)} placeholder="captain@email.com" /></Field>
                   </div>
-                  <button type="button" onClick={() => queueInvitations("individual")}>Queue individual invitations</button>
-                  <button type="button" onClick={() => queueInvitations("team")}>Queue team invitations</button>
+                  <button type="button" onClick={() => queueInvitations("individual")}>{t("builder.queueIndividual")}</button>
+                  <button type="button" onClick={() => queueInvitations("team")}>{t("builder.queueTeam")}</button>
                 </section>
-                <button className="builder-publish-btn" type="button" onClick={handlePublish} disabled={validation.length > 0 || !canPublishFromApproval}>Publish competition</button>
+                <button className="builder-publish-btn" type="button" onClick={handlePublish} disabled={validation.length > 0 || !canPublishFromApproval}>{t("builder.publishCompetition")}</button>
               </div>
             )}
 
             <div className="builder-actions">
-              <button type="button" disabled={step === 1} onClick={() => saveDraft(step - 1)}>Back</button>
-              <button type="button" onClick={() => step < 5 ? saveDraft(step + 1) : saveDraft(5)}>{step < 5 ? "Save & continue" : "Save final draft"}</button>
+              <button type="button" disabled={step === 1} onClick={() => saveDraft(step - 1)}>{t("builder.back")}</button>
+              <button type="button" onClick={() => step < 5 ? saveDraft(step + 1) : saveDraft(5)}>{step < 5 ? t("builder.saveContinue") : t("builder.saveFinal")}</button>
             </div>
           </section>
         </div>

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useLanguage } from "../../../context/LanguageContext";
 
 function formatScore(value) {
   if (value === null || value === undefined || value === "") return "-";
@@ -7,7 +8,12 @@ function formatScore(value) {
   return Number.isInteger(numeric) ? numeric : numeric.toFixed(2);
 }
 
+function optionLabel(t, group, value) {
+  return t(`options.${group}.${value}`, { defaultValue: String(value || "").replaceAll("_", " ") });
+}
+
 function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
+  const { t } = useLanguage();
   const canSubmit =
     competition.user_participation_status === "approved" &&
     ["participant", "team_member"].includes(competition.user_participation_role) &&
@@ -27,9 +33,9 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
     try {
       await onSubmissionCreate(form);
       setForm({ title: "", description: "", repository_url: "", demo_url: "" });
-      setMessage("Submission sent to judging.");
+      setMessage(t("judgingTab.submissionSent"));
     } catch (error) {
-      setMessage(error?.message || "Submission could not be saved.");
+      setMessage(error?.message || t("judgingTab.submissionSaveError"));
     } finally {
       setSaving(false);
     }
@@ -38,8 +44,8 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
   return (
     <div className="judge-scorecard">
       <div className="judging-round-heading">
-        <h3>My submissions</h3>
-        <span>{competition.submissions_open ? "open" : "closed"}</span>
+        <h3>{t("judgingTab.mySubmissions")}</h3>
+        <span>{competition.submissions_open ? t("judgingTab.open") : t("judgingTab.closed")}</span>
       </div>
 
       {!!mySubmissions.length && (
@@ -47,10 +53,10 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
           {mySubmissions.map((item) => (
             <div key={item.id} className="submission-row">
               <div>
-                <strong>{item.title || item.round_title || "Submission"}</strong>
-                <small>{item.round_title} · {item.status}</small>
+                <strong>{item.title || item.round_title || t("judgingTab.submissionFallback")}</strong>
+                <small>{item.round_title} - {optionLabel(t, "status", item.status)}</small>
               </div>
-              <span>{item.repository_url || item.demo_url || item.description || "No external link"}</span>
+              <span>{item.repository_url || item.demo_url || item.description || t("judgingTab.noExternalLink")}</span>
             </div>
           ))}
         </div>
@@ -61,40 +67,42 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
           <input
             value={form.title}
             onChange={(event) => updateField("title", event.target.value)}
-            placeholder="Title"
+            placeholder={t("judgingTab.formTitle")}
           />
           <textarea
             value={form.description}
             onChange={(event) => updateField("description", event.target.value)}
-            placeholder="Description"
+            placeholder={t("judgingTab.formDescription")}
             rows="3"
           />
           <input
             value={form.repository_url}
             onChange={(event) => updateField("repository_url", event.target.value)}
-            placeholder="Repository URL"
+            placeholder={t("judgingTab.repositoryUrl")}
           />
           <input
             value={form.demo_url}
             onChange={(event) => updateField("demo_url", event.target.value)}
-            placeholder="Demo URL"
+            placeholder={t("judgingTab.demoUrl")}
           />
           <div className="scorecard-actions">
-            <button type="submit" disabled={saving}>{saving ? "Sending..." : "Submit work"}</button>
+            <button type="submit" disabled={saving}>{saving ? t("judgingTab.sending") : t("judgingTab.submitWork")}</button>
             {message && <span>{message}</span>}
           </div>
         </form>
       )}
       {!canSubmit && !mySubmissions.length && (
-        <div className="judging-empty">Submissions are available only for approved participants during an active round.</div>
+        <div className="judging-empty">{t("judgingTab.submissionUnavailable")}</div>
       )}
     </div>
   );
 }
 
 function ScoreTables({ tables = [] }) {
+  const { t } = useLanguage();
+
   if (!tables.length) {
-    return <div className="judging-empty">Scores will appear here after submitted work is evaluated.</div>;
+    return <div className="judging-empty">{t("judgingTab.scoreEmpty")}</div>;
   }
 
   return (
@@ -102,19 +110,19 @@ function ScoreTables({ tables = [] }) {
       {tables.map((table) => (
         <div key={table.round?.id || table.round?.title} className="judging-round-block">
           <div className="judging-round-heading">
-            <h3>{table.round?.title || "Round"}</h3>
-            <span>{table.round?.status || "scheduled"}</span>
+            <h3>{table.round?.title || t("judgingTab.round")}</h3>
+            <span>{optionLabel(t, "status", table.round?.status || "scheduled")}</span>
           </div>
 
           <div className="judging-table-scroll">
             <table className="judging-score-table">
               <thead>
                 <tr>
-                  <th>Submitted work</th>
+                  <th>{t("judgingTab.submittedWork")}</th>
                   {(table.rows?.[0]?.criteria || []).map((criterion) => (
                     <th key={criterion.criterion_id}>{criterion.title}</th>
                   ))}
-                  <th>Total</th>
+                  <th>{t("resultsTab.total")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -135,7 +143,7 @@ function ScoreTables({ tables = [] }) {
                 ))}
                 {!table.rows?.length && (
                   <tr>
-                    <td colSpan="3">No accepted submissions are available for this round yet.</td>
+                    <td colSpan="3">{t("judgingTab.noAcceptedYet")}</td>
                   </tr>
                 )}
               </tbody>
@@ -148,6 +156,7 @@ function ScoreTables({ tables = [] }) {
 }
 
 function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
+  const { t } = useLanguage();
   const workspace = judging?.judge_workspace;
   const criteria = judging?.criteria || [];
   const rounds = (judging?.round_scores || []).map((item) => item.round).filter(Boolean);
@@ -247,9 +256,9 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
           is_final: finalize,
         });
       }
-      setMessage(finalize ? "Scores finalized." : "Draft scores saved.");
+      setMessage(finalize ? t("judgingTab.scoresFinalized") : t("judgingTab.draftScoresSaved"));
     } catch (error) {
-      setMessage(error?.message || "Scores could not be saved.");
+      setMessage(error?.message || t("judgingTab.scoresSaveError"));
     } finally {
       setSaving(false);
     }
@@ -262,9 +271,9 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
     setMessage("");
     try {
       await onScoreDelete(scoreId);
-      setMessage("Score removed.");
+      setMessage(t("judgingTab.scoreRemoved"));
     } catch (error) {
-      setMessage(error?.message || "Score could not be removed.");
+      setMessage(error?.message || t("judgingTab.scoreRemoveError"));
     } finally {
       setSaving(false);
     }
@@ -273,21 +282,21 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
   return (
     <div className="judge-scorecard">
       <div className="judging-round-heading">
-        <h3>Scorecard</h3>
-        <span>{allowedReviewTypes.join(", ")}</span>
+        <h3>{t("judgingTab.scorecard")}</h3>
+        <span>{allowedReviewTypes.map((item) => optionLabel(t, "review_type", item)).join(", ")}</span>
       </div>
 
       <div className="scorecard-controls">
         <label>
-          Mode
+          {t("judgingTab.mode")}
           <select value={reviewType} onChange={(event) => setReviewType(event.target.value)}>
             {allowedReviewTypes.map((item) => (
-              <option key={item} value={item}>{item.replace("_", " ")}</option>
+              <option key={item} value={item}>{optionLabel(t, "review_type", item)}</option>
             ))}
           </select>
         </label>
         <label>
-          Round
+          {t("judgingTab.round")}
           <select value={roundId} onChange={(event) => setRoundId(event.target.value)}>
             {rounds.map((round) => (
               <option key={round.id} value={round.id}>{round.title}</option>
@@ -295,7 +304,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
           </select>
         </label>
         <label>
-          Submission
+          {t("judgingTab.submission")}
           <select value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
             {subjectsForRound.map((subject) => (
               <option key={subject.id} value={subject.id}>{subject.title || subject.name}</option>
@@ -305,7 +314,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
       </div>
 
       {!subjectsForRound.length && (
-        <div className="judging-empty">No accepted submissions are available for this round.</div>
+        <div className="judging-empty">{t("judgingTab.noAcceptedForRound")}</div>
       )}
 
       {!!subjectsForRound.length && (
@@ -313,11 +322,11 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
           <table className="judging-score-table scorecard-table">
             <thead>
               <tr>
-                <th>Criterion</th>
-                <th>Max</th>
-                <th>Score</th>
-                <th>Comment</th>
-                <th>Status</th>
+                <th>{t("judgingTab.criterion")}</th>
+                <th>{t("judgingTab.max")}</th>
+                <th>{t("judgingTab.score")}</th>
+                <th>{t("judgingTab.comment")}</th>
+                <th>{t("judgingTab.status")}</th>
               </tr>
             </thead>
             <tbody>
@@ -348,10 +357,10 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
                       />
                     </td>
                     <td>
-                      <span>{draft.isFinal ? "final" : draft.scoreId ? "draft" : "new"}</span>
+                      <span>{draft.isFinal ? t("judgingTab.final") : draft.scoreId ? t("judgingTab.draft") : t("judgingTab.new")}</span>
                       {draft.scoreId && (
                         <button type="button" className="score-delete-btn" onClick={() => handleDelete(criterion.id)} disabled={saving}>
-                          Clear
+                          {t("judgingTab.clear")}
                         </button>
                       )}
                     </td>
@@ -365,10 +374,10 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
 
       <div className="scorecard-actions">
         <button type="button" onClick={() => handleSave(false)} disabled={saving || !subjectsForRound.length}>
-          {saving ? "Saving..." : "Save draft"}
+          {saving ? t("judgingTab.saving") : t("judgingTab.saveDraft")}
         </button>
         <button type="button" onClick={() => handleSave(true)} disabled={saving || !subjectsForRound.length}>
-          Finalize
+          {t("judgingTab.finalize")}
         </button>
         {message && <span>{message}</span>}
       </div>
@@ -377,18 +386,19 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
 }
 
 export default function JudgingTab({ competition, onScoreSubmit, onSubmissionCreate, onScoreDelete }) {
+  const { t } = useLanguage();
   const judging = competition.judging || {};
   const reviewModes = judging.review_modes || {};
   const roundScores = judging.round_scores || competition.results?.roundScores || [];
 
   return (
     <section className="competition-panel">
-      <h2 className="competition-section-title">Judging</h2>
+      <h2 className="competition-section-title">{t("judgingTab.title")}</h2>
 
       <div className="judging-mode-line">
-        Scoring mode: <strong>{judging.mode || "not configured"}</strong>
-        <span>Aggregation: {reviewModes.aggregation || "average"}</span>
-        <span>Visibility: {reviewModes.visibility || "aggregate"}</span>
+        {t("judgingTab.scoringMode")} <strong>{judging.mode ? optionLabel(t, "review_type", judging.mode) : t("competitionPage.notConfigured")}</strong>
+        <span>{t("judgingTab.aggregation")} {optionLabel(t, "aggregation", reviewModes.aggregation || "average")}</span>
+        <span>{t("judgingTab.visibility")} {optionLabel(t, "visibility", reviewModes.visibility || "aggregate")}</span>
       </div>
 
       <SubmissionPanel competition={competition} judging={judging} onSubmissionCreate={onSubmissionCreate} />

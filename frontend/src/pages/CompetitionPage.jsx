@@ -8,6 +8,7 @@ import CompetitionTabs from "../components/competition/CompetitionTabs";
 import CompetitionTabContent from "../components/competition/CompetitionTabContent";
 import JoinCompetitionModal from "../components/competition/JoinCompetitionModal";
 import { useAuth } from "../context/AuthContext";
+import { useLanguage } from "../context/LanguageContext";
 
 import { fetchCompetitionDetail, fetchCompetitions, fetchCompetitionParticipants, fetchCompetitionResults, fetchCompetitionJudging, submitCompetitionScore, submitCompetitionWork, deleteCompetitionScore } from "../api/landingApi";
 
@@ -17,27 +18,31 @@ function capitalize(value) {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
-function formatDateRange(baseCompetition) {
+function optionLabel(t, group, value, fallback = "") {
+  return t(`options.${group}.${value}`, { defaultValue: fallback || capitalize(value) });
+}
+
+function formatDateRange(baseCompetition, language, t) {
   const startDate = baseCompetition?.starts_at ? new Date(baseCompetition.starts_at) : null;
   const endDate = baseCompetition?.ends_at ? new Date(baseCompetition.ends_at) : null;
 
   if (!startDate || !endDate || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-    return "Schedule is being finalized";
+    return t("competitionPage.schedulePending");
   }
 
   const format = (date) =>
-    date.toLocaleDateString("en-US", {
+    date.toLocaleDateString(language === "uk" ? "uk-UA" : "en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
     });
 
-  return `${format(startDate)} – ${format(endDate)}`;
+  return `${format(startDate)} - ${format(endDate)}`;
 }
 
-function formatUpcomingCountdown(timerDeadline) {
+function formatUpcomingCountdown(timerDeadline, t) {
   if (!timerDeadline) {
-    return "timer is not available";
+    return t("competitionPage.timerUnavailable");
   }
 
   const diff = new Date(timerDeadline).getTime() - Date.now();
@@ -51,7 +56,7 @@ function formatUpcomingCountdown(timerDeadline) {
   return `${hours}:${minutes}:${seconds}`;
 }
 
-function enrichCompetition(baseCompetition) {
+function enrichCompetition(baseCompetition, language, t) {
   const currentRound = baseCompetition?.current_round || 0;
   const totalRounds = baseCompetition?.total_rounds || 0;
   const nextRound = totalRounds ? Math.min(currentRound + 1, totalRounds) : 0;
@@ -59,21 +64,25 @@ function enrichCompetition(baseCompetition) {
   return {
     ...baseCompetition,
     organizerCode: baseCompetition?.slug || `competition-${baseCompetition?.id || ""}`,
-    category: capitalize(baseCompetition?.industry) || "Competition",
-    difficulty: capitalize(baseCompetition?.difficulty) || "Mixed",
-    datesLabel: formatDateRange(baseCompetition),
-    sidebarDescription: baseCompetition?.short_description || "Competition details are being prepared by the organizer.",
+    category: baseCompetition?.industry
+      ? optionLabel(t, "industry", baseCompetition.industry)
+      : t("competitionPage.categoryFallback"),
+    difficulty: baseCompetition?.difficulty
+      ? optionLabel(t, "difficulty", baseCompetition.difficulty)
+      : t("competitionPage.difficultyFallback"),
+    datesLabel: formatDateRange(baseCompetition, language, t),
+    sidebarDescription: baseCompetition?.short_description || t("competitionPage.descriptionFallback"),
     upcomingText: nextRound
-      ? `Round ${nextRound} timer: ${formatUpcomingCountdown(baseCompetition?.timer_deadline)}`
-      : `Timer: ${formatUpcomingCountdown(baseCompetition?.timer_deadline)}`,
+      ? t("competitionPage.roundTimer", { round: nextRound, time: formatUpcomingCountdown(baseCompetition?.timer_deadline, t) })
+      : t("competitionPage.timer", { time: formatUpcomingCountdown(baseCompetition?.timer_deadline, t) }),
     materials: (baseCompetition?.materials || []).map((material) => ({
       ...material,
-      icon: material.icon || "📎",
+      icon: material.icon || "M",
     })),
     announcements: baseCompetition?.announcements || [],
     participants: baseCompetition?.participants || [],
     results: baseCompetition?.results || { roundHistory: [], leaderboard: [], roundScores: [] },
-    judging: baseCompetition?.judging || { mode: "not configured", metrics: [], criteria: [], round_scores: [], my_submissions: [] },
+    judging: baseCompetition?.judging || { mode: t("competitionPage.notConfigured"), metrics: [], criteria: [], round_scores: [], my_submissions: [] },
   };
 }
 
@@ -84,10 +93,11 @@ export default function CompetitionPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { user } = useAuth();
+  const { language, t } = useLanguage();
 
   const [competition, setCompetition] = useState(
     location.state?.competition
-      ? enrichCompetition(location.state.competition)
+      ? enrichCompetition(location.state.competition, language, t)
       : null
   );
   const [loading, setLoading] = useState(!location.state?.competition);
@@ -143,9 +153,9 @@ export default function CompetitionPage() {
           })),
           roundScores: resultsData.round_scores || [],
         };
-        const judging = judgingResponse.status === "fulfilled" ? judgingResponse.value : { mode: "not configured", metrics: [] };
+        const judging = judgingResponse.status === "fulfilled" ? judgingResponse.value : { mode: t("competitionPage.notConfigured"), metrics: [] };
         if (isMounted) {
-          setCompetition(enrichCompetition({ ...detail, participants, results, judging }));
+          setCompetition(enrichCompetition({ ...detail, participants, results, judging }, language, t));
         }
       } catch (err) {
         console.error(err);
@@ -156,12 +166,12 @@ export default function CompetitionPage() {
         try {
           const list = await fetchCompetitions({ tab: "trending" });
           const found = list.find((item) => String(item.id) === String(id));
-          if (!found) throw new Error("Competition not found");
+          if (!found) throw new Error(t("competitionPage.notFound"));
           const participants = await fetchCompetitionParticipants(id).catch(() => []);
-          if (isMounted) setCompetition(enrichCompetition({ ...found, participants }));
+          if (isMounted) setCompetition(enrichCompetition({ ...found, participants }, language, t));
         } catch (fallbackError) {
           console.error(fallbackError);
-          if (isMounted) setError("Не вдалося завантажити сторінку змагання.");
+          if (isMounted) setError(t("competitionPage.loadError"));
         }
       } finally {
         if (showLoader && isMounted) setLoading(false);
@@ -175,7 +185,7 @@ export default function CompetitionPage() {
       isMounted = false;
       window.clearInterval(intervalId);
     };
-  }, [id, location.state]);
+  }, [id, location.state, language, t]);
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -226,7 +236,7 @@ export default function CompetitionPage() {
                 ...(announcement.comments || []),
                 {
                   id: Date.now(),
-                  author: "You",
+                  author: t("competitionPage.you"),
                   text,
                 },
               ],
@@ -252,7 +262,7 @@ export default function CompetitionPage() {
           ...(prev?.results || {}),
           roundScores: response.round_scores || prev?.results?.roundScores || [],
         },
-      })
+      }, language, t)
     );
     return response;
   };
@@ -266,7 +276,7 @@ export default function CompetitionPage() {
           ...(prev?.judging || {}),
           my_submissions: [submission, ...(prev?.judging?.my_submissions || [])],
         },
-      })
+      }, language, t)
     );
     return submission;
   };
@@ -285,18 +295,18 @@ export default function CompetitionPage() {
           ...(prev?.results || {}),
           roundScores: response.round_scores || prev?.results?.roundScores || [],
         },
-      })
+      }, language, t)
     );
     return response;
   };
 
   const pageTitle = useMemo(
-    () => competition?.name || "Competition",
-    [competition]
+    () => competition?.name || t("competitionPage.titleFallback"),
+    [competition, t]
   );
 
   if (loading) {
-    return <div className="competition-page-state">Loading competition...</div>;
+    return <div className="competition-page-state">{t("competitionPage.loading")}</div>;
   }
 
   if (error) {
@@ -304,7 +314,7 @@ export default function CompetitionPage() {
   }
 
   if (!competition) {
-    return <div className="competition-page-state">Competition not found.</div>;
+    return <div className="competition-page-state">{t("competitionPage.notFound")}</div>;
   }
 
   return (
