@@ -10,6 +10,9 @@ export default function CompetitionTabContent({
   commentText,
   onCommentTextChange,
   onCommentPost,
+  onScoreSubmit,
+  onSubmissionCreate,
+  onScoreDelete,
 }) {
   if (activeTab === "participants") {
     return <ParticipantsTab competition={competition} />;
@@ -20,7 +23,14 @@ export default function CompetitionTabContent({
   }
 
   if (activeTab === "judging") {
-    return <JudgingTab competition={competition} />;
+    return (
+      <JudgingTab
+        competition={competition}
+        onScoreSubmit={onScoreSubmit}
+        onSubmissionCreate={onSubmissionCreate}
+        onScoreDelete={onScoreDelete}
+      />
+    );
   }
 
   return (

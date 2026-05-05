@@ -12,9 +12,12 @@ from .models import (
     CompetitionTeam,
     CompetitionParticipant,
     CompetitionJoinRequest,
+    CompetitionSubmission,
     CompetitionRound,
     CompetitionSubmissionSettings,
     CompetitionJudgingCriterion,
+    CompetitionJudgeAssignment,
+    CompetitionScore,
     CompetitionAward,
     CompetitionInvitation,
     OutboundMessage,
@@ -36,7 +39,7 @@ class CompetitionRoundSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompetitionRound
         fields = [
-            "id", "title", "description", "starts_at", "ends_at",
+            "id", "title", "description", "status", "starts_at", "ends_at",
             "submission_required", "max_attempts",
             "is_stream_enabled", "stream_url", "stream_embed_url", "stream_label",
             "sort_order",
@@ -47,7 +50,7 @@ class CompetitionSubmissionSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompetitionSubmissionSettings
         fields = [
-            "submission_mode", "allowed_file_types", "max_file_size_mb",
+            "submission_mode", "submission_policy", "allowed_file_types", "max_file_size_mb",
             "max_submissions", "repository_url_required", "demo_url_required",
             "description_required",
         ]
@@ -105,7 +108,10 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
             "access_mode", "visibility_mode", "show_in_catalog",
             "allow_sharing_link", "allow_external_registration",
             "min_team_size", "max_team_size", "allow_user_team_invites",
-            "allow_organizer_team_assignment", "registration_open",
+            "allow_organizer_team_assignment", "manual_judging_enabled",
+            "automatic_judging_enabled", "peer_review_enabled",
+            "judging_aggregation", "judging_visibility", "results_frozen",
+            "registration_open",
             "submissions_open", "is_public", "setup_step",
             "completion_percent", "publish_ready",
             "organizer_approval_status", "organizer_approved_at",
@@ -469,6 +475,129 @@ class CompetitionJoinRequestSerializer(serializers.ModelSerializer):
         return ""
 
 
+class CompetitionSubmissionSerializer(serializers.ModelSerializer):
+    participant_name = serializers.CharField(source="participant.display_name", read_only=True)
+    team_name = serializers.CharField(source="team.name", read_only=True)
+    round_title = serializers.CharField(source="round.title", read_only=True)
+    submitted_by_name = serializers.SerializerMethodField()
+    file = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CompetitionSubmission
+        fields = [
+            "id",
+            "competition",
+            "round",
+            "round_title",
+            "participant",
+            "participant_name",
+            "team",
+            "team_name",
+            "submitted_by",
+            "submitted_by_name",
+            "title",
+            "description",
+            "repository_url",
+            "demo_url",
+            "file",
+            "status",
+            "locked_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "round_title", "participant_name", "team_name", "submitted_by_name", "file", "created_at", "updated_at"]
+
+    def get_submitted_by_name(self, obj):
+        if not obj.submitted_by:
+            return ""
+        full_name = obj.submitted_by.get_full_name()
+        return full_name or obj.submitted_by.get_username() or getattr(obj.submitted_by, "email", "")
+
+    def get_file(self, obj):
+        if not obj.file:
+            return None
+        return {
+            "id": obj.file_id,
+            "original_name": obj.file.original_name,
+            "mime_type": obj.file.mime_type,
+            "size_bytes": obj.file.size_bytes,
+            "url": obj.file.public_url or f"/api/files/{obj.file_id}/download/",
+        }
+
+
+class CompetitionJudgeAssignmentSerializer(serializers.ModelSerializer):
+    judge_name = serializers.SerializerMethodField()
+    round_title = serializers.CharField(source="round.title", read_only=True)
+
+    class Meta:
+        model = CompetitionJudgeAssignment
+        fields = [
+            "id",
+            "competition",
+            "round",
+            "round_title",
+            "judge",
+            "judge_name",
+            "assignment_type",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_judge_name(self, obj):
+        full_name = obj.judge.get_full_name()
+        return full_name or obj.judge.get_username() or getattr(obj.judge, "email", "")
+
+
+class CompetitionScoreSerializer(serializers.ModelSerializer):
+    judge_name = serializers.SerializerMethodField()
+    criterion_title = serializers.CharField(source="criterion.title", read_only=True)
+    criterion_max_score = serializers.IntegerField(source="criterion.max_score", read_only=True)
+    round_title = serializers.CharField(source="round.title", read_only=True)
+    participant_name = serializers.CharField(source="subject_participant.display_name", read_only=True)
+    team_name = serializers.CharField(source="subject_team.name", read_only=True)
+
+    class Meta:
+        model = CompetitionScore
+        fields = [
+            "id",
+            "competition",
+            "round",
+            "round_title",
+            "criterion",
+            "criterion_title",
+            "criterion_max_score",
+            "judge",
+            "judge_name",
+            "subject_participant",
+            "participant_name",
+            "subject_team",
+            "team_name",
+            "submission",
+            "review_type",
+            "score",
+            "comment",
+            "is_final",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "judge_name", "criterion_title", "criterion_max_score", "round_title", "participant_name", "team_name", "created_at", "updated_at"]
+
+    def get_judge_name(self, obj):
+        if not obj.judge:
+            return "Automatic"
+        visibility = getattr(obj.competition, "judging_visibility", "aggregate")
+        request = self.context.get("request")
+        can_see_name = visibility == "open"
+        if request and request.user.is_authenticated:
+            can_see_name = can_see_name or request.user.id == obj.judge_id
+        if not can_see_name:
+            return "Anonymous judge"
+        full_name = obj.judge.get_full_name()
+        return full_name or obj.judge.get_username() or getattr(obj.judge, "email", "")
+
+
 class CompetitionRoundResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompetitionRoundResult
@@ -606,6 +735,12 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
             "allow_external_registration",
             "min_team_size",
             "max_team_size",
+            "manual_judging_enabled",
+            "automatic_judging_enabled",
+            "peer_review_enabled",
+            "judging_aggregation",
+            "judging_visibility",
+            "results_frozen",
             "industry",
             "industry_label",
             "difficulty",
@@ -808,6 +943,12 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "allow_external_registration",
             "min_team_size",
             "max_team_size",
+            "manual_judging_enabled",
+            "automatic_judging_enabled",
+            "peer_review_enabled",
+            "judging_aggregation",
+            "judging_visibility",
+            "results_frozen",
             "industry",
             "industry_label",
             "difficulty",

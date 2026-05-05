@@ -1,10 +1,12 @@
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 import hashlib
 import secrets
 import uuid
 
 from django.conf import settings
 from django.contrib.auth import get_user_model, login, logout
+from django.db import IntegrityError, transaction
 from django.db.models import Q, F, ExpressionWrapper, FloatField
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
@@ -30,6 +32,11 @@ from .models import (
     CompetitionJoinRequest,
     CompetitionInvitation,
     OutboundMessage,
+    CompetitionRound,
+    CompetitionJudgingCriterion,
+    CompetitionSubmission,
+    CompetitionJudgeAssignment,
+    CompetitionScore,
     CompetitionRoundResult,
     CompetitionLeaderboardEntry,
     CompetitionJudgingMetric,
@@ -51,9 +58,13 @@ from .serializers import (
     CompetitionTeamSerializer,
     CompetitionParticipantSerializer,
     CompetitionJoinRequestSerializer,
+    CompetitionSubmissionSerializer,
     CompetitionBuilderSerializer,
+    CompetitionJudgingCriterionSerializer,
     CompetitionInvitationSerializer,
     OutboundMessageSerializer,
+    CompetitionJudgeAssignmentSerializer,
+    CompetitionScoreSerializer,
     CompetitionRoundResultSerializer,
     CompetitionLeaderboardEntrySerializer,
     CompetitionJudgingMetricSerializer,
@@ -93,15 +104,32 @@ def recompute_competition_timing(competition, now=None, save=True):
     active_round = None
     completed_rounds = 0
     blocked_by_previous = False
+    round_status_updates = []
     for index, round_obj in enumerate(rounds, start=1):
+        next_round_status = round_obj.status
         if round_obj.ends_at and now > round_obj.ends_at:
             completed_rounds = index
+            next_round_status = "judged" if competition.status in ["finished", "archived"] else "closed"
+            if round_obj.status != next_round_status:
+                round_obj.status = next_round_status
+                round_status_updates.append(round_obj)
             continue
         if blocked_by_previous:
+            if round_obj.status not in ["draft", "scheduled"]:
+                round_obj.status = "scheduled" if round_obj.starts_at else "draft"
+                round_status_updates.append(round_obj)
             break
         if round_obj.starts_at and round_obj.ends_at and round_obj.starts_at <= now <= round_obj.ends_at:
             active_round = (index, round_obj)
+            next_round_status = "active"
+            if round_obj.status != next_round_status:
+                round_obj.status = next_round_status
+                round_status_updates.append(round_obj)
             break
+        next_round_status = "scheduled" if round_obj.starts_at else "draft"
+        if round_obj.status != next_round_status:
+            round_obj.status = next_round_status
+            round_status_updates.append(round_obj)
         # Once we reach the first not-finished round, later rounds are not allowed
         # to become active even if their dates overlap by mistake.
         blocked_by_previous = True
@@ -162,6 +190,14 @@ def recompute_competition_timing(competition, now=None, save=True):
             "status", "registration_open", "submissions_open", "timer_deadline",
             "current_round", "total_rounds", "trending_score", "updated_at",
         ])
+        if round_status_updates:
+            CompetitionRound.objects.bulk_update(round_status_updates, ["status"])
+        closed_round_ids = [round_obj.id for round_obj in rounds if round_obj.ends_at and now > round_obj.ends_at]
+        if closed_round_ids:
+            CompetitionSubmission.objects.filter(
+                competition=competition,
+                round_id__in=closed_round_ids,
+            ).exclude(status__in=["locked", "rejected"]).update(status="locked", locked_at=now)
     return competition
 
 def get_or_create_profile(user, defaults=None):
@@ -506,6 +542,7 @@ class CompetitionDetailView(APIView):
             pk=pk,
             is_public=True,
         )
+        recompute_competition_timing(competition, save=True)
 
         recompute_competition_timing(competition, save=True)
 
@@ -919,6 +956,323 @@ class TeamManagementView(APIView):
         return Response(CompetitionTeamSerializer(team).data)
 
 
+def judging_subjects(competition):
+    submissions = CompetitionSubmission.objects.filter(
+        competition=competition,
+        status__in=["accepted", "locked"],
+    ).select_related("round", "participant", "team", "submitted_by").order_by(
+        "round__sort_order", "team__name", "participant__display_name", "-updated_at"
+    )
+
+    subjects = []
+    for submission in submissions:
+        if submission.team_id:
+            subject_name = submission.team.name
+            subject_type = "team"
+        elif submission.participant_id:
+            subject_name = submission.participant.display_name
+            subject_type = "participant"
+        else:
+            subject_name = submission.title or "Submission"
+            subject_type = "submission"
+        subjects.append({
+            "type": subject_type,
+            "id": f"submission-{submission.id}",
+            "submission_id": submission.id,
+            "round_id": submission.round_id,
+            "team_id": submission.team_id,
+            "participant_id": submission.participant_id,
+            "name": subject_name,
+            "title": submission.title,
+            "status": submission.status,
+            "repository_url": submission.repository_url,
+            "demo_url": submission.demo_url,
+        })
+    return subjects
+
+
+def user_competition_membership(user, competition):
+    if not user or not user.is_authenticated:
+        return None
+    return CompetitionParticipant.objects.filter(
+        competition=competition,
+        user=user,
+    ).select_related("team").first()
+
+
+def user_allowed_review_types(user, competition):
+    if not user or not user.is_authenticated:
+        return []
+    if user_can_edit_competition(user, competition):
+        allowed = []
+        if competition.automatic_judging_enabled:
+            allowed.append("automatic")
+        if competition.manual_judging_enabled:
+            allowed.append("manual")
+        if competition.peer_review_enabled:
+            allowed.append("peer_review")
+        return allowed
+
+    membership = user_competition_membership(user, competition)
+    allowed = []
+    if membership and membership.role == "judge" and membership.status == "approved" and competition.manual_judging_enabled:
+        allowed.append("manual")
+    if membership and membership.role in ["participant", "team_member"] and membership.status == "approved" and competition.peer_review_enabled:
+        allowed.append("peer_review")
+    return allowed
+
+
+def criterion_allows_review_type(criterion, review_type):
+    if criterion.judging_mode == "mixed":
+        return review_type in {"automatic", "manual", "peer_review"}
+    if criterion.judging_mode == "public_voting":
+        return review_type == "peer_review"
+    return criterion.judging_mode == review_type
+
+
+def score_visibility_allows_details(request, competition):
+    if competition.judging_visibility == "open":
+        return True
+    if request and request.user.is_authenticated and user_can_edit_competition(request.user, competition):
+        return True
+    return False
+
+
+def build_round_score_tables(competition, request=None):
+    rounds = list(competition.rounds.all().order_by("sort_order", "id"))
+    criteria = list(competition.judging_criteria.all().order_by("sort_order", "id"))
+    subjects = judging_subjects(competition)
+    subject_lookup = {subject["id"]: subject for subject in subjects}
+    scores = CompetitionScore.objects.filter(competition=competition).select_related(
+        "round",
+        "criterion",
+        "judge",
+        "subject_participant",
+        "subject_team",
+    ).order_by("round__sort_order", "criterion__sort_order", "id")
+
+    grouped = {}
+    for item in scores:
+        if item.submission_id:
+            subject_id = f"submission-{item.submission_id}"
+        else:
+            subject_id = f"team-{item.subject_team_id}" if item.subject_team_id else f"participant-{item.subject_participant_id}"
+        if subject_id not in subject_lookup:
+            continue
+        row_key = (item.round_id, subject_id)
+        criterion_bucket = grouped.setdefault(row_key, {}).setdefault(item.criterion_id, [])
+        criterion_bucket.append(item)
+
+    show_details = score_visibility_allows_details(request, competition)
+    tables = []
+    for round_obj in rounds:
+        rows = []
+        for subject in subjects:
+            if subject.get("round_id") != round_obj.id:
+                continue
+            criterion_values = []
+            total_score = Decimal("0")
+            scored_criteria = 0
+            score_details = []
+            for criterion in criteria:
+                entries = grouped.get((round_obj.id, subject["id"]), {}).get(criterion.id, [])
+                if entries:
+                    values = [entry.score for entry in entries]
+                    aggregate = sum(values, Decimal("0"))
+                    if competition.judging_aggregation == "average":
+                        aggregate = aggregate / Decimal(len(values))
+                    weighted = aggregate * Decimal(str(criterion.weight))
+                    total_score += weighted
+                    scored_criteria += 1
+                    value = float(aggregate)
+                else:
+                    value = None
+                criterion_values.append({
+                    "criterion_id": criterion.id,
+                    "title": criterion.title,
+                    "max_score": criterion.max_score,
+                    "weight": criterion.weight,
+                    "score": value,
+                    "score_count": len(entries),
+                })
+                if show_details:
+                    score_details.extend(CompetitionScoreSerializer(entries, many=True, context={"request": request}).data)
+
+            if scored_criteria or competition.status in ["active", "judging", "finished", "archived"]:
+                rows.append({
+                    "subject": subject,
+                    "total_score": float(total_score) if scored_criteria else None,
+                    "scored_criteria": scored_criteria,
+                    "criteria": criterion_values,
+                    "scores": score_details,
+                })
+        rows.sort(key=lambda item: (item["total_score"] is None, -(item["total_score"] or 0), item["subject"]["name"]))
+        tables.append({
+            "round": {
+                "id": round_obj.id,
+                "title": round_obj.title,
+                "status": round_obj.status,
+                "sort_order": round_obj.sort_order,
+                "starts_at": round_obj.starts_at,
+                "ends_at": round_obj.ends_at,
+            },
+            "rows": rows,
+        })
+    return tables
+
+
+def build_judge_workspace(competition, request):
+    if not request or not request.user.is_authenticated:
+        return None
+    allowed_review_types = user_allowed_review_types(request.user, competition)
+    if not allowed_review_types:
+        return None
+
+    membership = user_competition_membership(request.user, competition)
+    subjects = judging_subjects(competition)
+    if "peer_review" in allowed_review_types and allowed_review_types == ["peer_review"] and membership:
+        subjects = [
+            subject for subject in subjects
+            if subject.get("participant_id") != membership.id and subject.get("team_id") != membership.team_id
+        ]
+
+    own_scores = CompetitionScore.objects.filter(
+        competition=competition,
+        judge=request.user,
+    ).select_related("round", "criterion", "subject_participant", "subject_team", "judge")
+
+    assignments = CompetitionJudgeAssignment.objects.filter(
+        competition=competition,
+        judge=request.user,
+    ).select_related("round", "judge")
+
+    return {
+        "allowed_review_types": allowed_review_types,
+        "default_review_type": allowed_review_types[0],
+        "subjects": subjects,
+        "assignments": CompetitionJudgeAssignmentSerializer(assignments, many=True).data,
+        "existing_scores": CompetitionScoreSerializer(own_scores, many=True, context={"request": request}).data,
+    }
+
+
+def active_submission_round(competition):
+    return competition.rounds.filter(status="active", submission_required=True).order_by("sort_order", "id").first()
+
+
+def submission_owner_filter(membership):
+    if membership.team_id:
+        return {"team": membership.team, "participant": None}
+    return {"participant": membership, "team": None}
+
+
+def user_submission_queryset(user, competition):
+    membership = user_competition_membership(user, competition)
+    if not membership:
+        return CompetitionSubmission.objects.none()
+    if membership.team_id:
+        return CompetitionSubmission.objects.filter(competition=competition, team=membership.team)
+    return CompetitionSubmission.objects.filter(competition=competition, participant=membership)
+
+
+class CompetitionSubmissionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if user_can_edit_competition(request.user, competition):
+            submissions = CompetitionSubmission.objects.filter(competition=competition)
+        else:
+            membership = user_competition_membership(request.user, competition)
+            if membership and membership.role == "judge" and membership.status == "approved":
+                submissions = CompetitionSubmission.objects.filter(competition=competition, status__in=["accepted", "locked"])
+            else:
+                submissions = user_submission_queryset(request.user, competition)
+        submissions = submissions.select_related("round", "participant", "team", "submitted_by", "file").order_by("round__sort_order", "-updated_at")
+        return Response(CompetitionSubmissionSerializer(submissions, many=True, context={"request": request}).data)
+
+    def post(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk, is_public=True)
+        recompute_competition_timing(competition, save=True)
+        membership = user_competition_membership(request.user, competition)
+        if not membership or membership.status != "approved" or membership.role not in ["participant", "team_member"]:
+            return Response({"detail": "Only approved participants can submit work for judging."}, status=status.HTTP_403_FORBIDDEN)
+
+        round_obj = active_submission_round(competition)
+        if not competition.submissions_open or not round_obj:
+            return Response({"detail": "Submissions are open only during the active submission round."}, status=status.HTTP_400_BAD_REQUEST)
+
+        settings_obj = getattr(competition, "submission_settings", None)
+        title = (request.data.get("title") or "").strip()
+        description = (request.data.get("description") or "").strip()
+        repository_url = (request.data.get("repository_url") or request.data.get("repositoryUrl") or "").strip()
+        demo_url = (request.data.get("demo_url") or request.data.get("demoUrl") or "").strip()
+
+        if settings_obj:
+            if settings_obj.description_required and not description:
+                return Response({"detail": "Submission description is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if settings_obj.repository_url_required and not repository_url:
+                return Response({"detail": "Repository URL is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if settings_obj.demo_url_required and not demo_url:
+                return Response({"detail": "Demo URL is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        owner_filter = submission_owner_filter(membership)
+        existing = CompetitionSubmission.objects.filter(
+            competition=competition,
+            round=round_obj,
+            **owner_filter,
+        ).exclude(status="rejected").order_by("-created_at")
+
+        policy = settings_obj.submission_policy if settings_obj else "single"
+        max_submissions = settings_obj.max_submissions if settings_obj else 1
+        if policy == "single" and existing.exists():
+            return Response({"detail": "This round accepts only one submission."}, status=status.HTTP_400_BAD_REQUEST)
+        if policy == "multiple" and existing.count() >= max_submissions:
+            return Response({"detail": "Maximum submissions for this round has been reached."}, status=status.HTTP_400_BAD_REQUEST)
+        if policy == "latest":
+            existing.exclude(status="locked").update(status="rejected")
+
+        file_obj = None
+        file_id = request.data.get("file") or request.data.get("file_id")
+        if file_id:
+            file_obj = get_object_or_404(UserFile, pk=file_id, owner=request.user)
+
+        submission = CompetitionSubmission.objects.create(
+            competition=competition,
+            round=round_obj,
+            participant=owner_filter["participant"],
+            team=owner_filter["team"],
+            submitted_by=request.user,
+            title=title,
+            description=description,
+            repository_url=repository_url,
+            demo_url=demo_url,
+            file=file_obj,
+            status="accepted",
+        )
+        return Response(CompetitionSubmissionSerializer(submission, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
+class CompetitionSubmissionReviewView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        submission = get_object_or_404(
+            CompetitionSubmission.objects.select_related("competition", "round", "participant", "team", "submitted_by", "file"),
+            pk=pk,
+        )
+        if not user_can_edit_competition(request.user, submission.competition):
+            return Response({"detail": "Only the organizer can review submissions."}, status=status.HTTP_403_FORBIDDEN)
+
+        next_status = (request.data.get("status") or request.data.get("decision") or "").strip().lower()
+        if next_status not in {"accepted", "rejected", "locked"}:
+            return Response({"detail": "Submission status must be accepted, rejected, or locked."}, status=status.HTTP_400_BAD_REQUEST)
+        submission.status = next_status
+        if next_status == "locked" and not submission.locked_at:
+            submission.locked_at = timezone.now()
+        submission.save(update_fields=["status", "locked_at", "updated_at"])
+        return Response(CompetitionSubmissionSerializer(submission, context={"request": request}).data)
+
+
 class CompetitionResultsView(APIView):
     permission_classes = [AllowAny]
 
@@ -935,7 +1289,7 @@ class CompetitionResultsView(APIView):
 
         leaderboard = CompetitionLeaderboardEntry.objects.filter(
             competition=competition
-        ).order_by("rank", "id")
+        ).order_by("rank", "id")[:10]
 
         return Response({
             "round_history": CompetitionRoundResultSerializer(
@@ -946,6 +1300,7 @@ class CompetitionResultsView(APIView):
                 leaderboard,
                 many=True,
             ).data,
+            "round_scores": build_round_score_tables(competition, request),
         })
 
 
@@ -1468,6 +1823,16 @@ class CompetitionJudgeAssignmentView(APIView):
                 "is_active_now": False,
             },
         )
+        CompetitionJudgeAssignment.objects.get_or_create(
+            competition=competition,
+            round=None,
+            judge=user,
+            assignment_type="manual",
+            defaults={
+                "status": "accepted",
+                "invited_by": request.user,
+            },
+        )
         return Response(CompetitionParticipantSerializer(participant).data, status=status.HTTP_201_CREATED)
 
 
@@ -1614,12 +1979,189 @@ class CompetitionJudgingView(APIView):
             competition=competition
         ).order_by("sort_order", "id")
 
-        mode = metrics[0].mode if metrics else "individual"
+        criteria = competition.judging_criteria.all().order_by("sort_order", "id")
+        configured_modes = sorted({criterion.judging_mode for criterion in criteria})
+        if not configured_modes:
+            configured_modes = [
+                mode for mode, enabled in [
+                    ("automatic", competition.automatic_judging_enabled),
+                    ("manual", competition.manual_judging_enabled),
+                    ("peer_review", competition.peer_review_enabled),
+                ] if enabled
+            ]
+        mode = ", ".join(configured_modes) if configured_modes else (metrics[0].mode if metrics else "not configured")
+
+        assignments = CompetitionJudgeAssignment.objects.none()
+        if request.user.is_authenticated and user_can_edit_competition(request.user, competition):
+            assignments = CompetitionJudgeAssignment.objects.filter(competition=competition).select_related("round", "judge")
 
         return Response({
             "mode": mode,
+            "review_modes": {
+                "automatic": competition.automatic_judging_enabled,
+                "manual": competition.manual_judging_enabled,
+                "peer_review": competition.peer_review_enabled,
+                "aggregation": competition.judging_aggregation,
+                "visibility": competition.judging_visibility,
+                "results_frozen": competition.results_frozen,
+            },
+            "criteria": CompetitionJudgingCriterionSerializer(criteria, many=True).data,
+            "submissions": CompetitionSubmissionSerializer(
+                CompetitionSubmission.objects.filter(competition=competition, status__in=["accepted", "locked"]).select_related("round", "participant", "team", "submitted_by", "file"),
+                many=True,
+                context={"request": request},
+            ).data,
+            "my_submissions": CompetitionSubmissionSerializer(
+                user_submission_queryset(request.user, competition).select_related("round", "participant", "team", "submitted_by", "file") if request.user.is_authenticated else CompetitionSubmission.objects.none(),
+                many=True,
+                context={"request": request},
+            ).data,
+            "round_scores": build_round_score_tables(competition, request),
+            "judge_workspace": build_judge_workspace(competition, request),
+            "assignments": CompetitionJudgeAssignmentSerializer(assignments, many=True).data,
             "metrics": CompetitionJudgingMetricSerializer(
                 metrics,
                 many=True,
             ).data,
+        })
+
+    def post(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk, is_public=True)
+        recompute_competition_timing(competition, save=True)
+        if competition.results_frozen:
+            return Response({"detail": "Results are frozen for this competition."}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed_review_types = user_allowed_review_types(request.user, competition)
+        review_type = (request.data.get("review_type") or request.data.get("reviewType") or (allowed_review_types[0] if allowed_review_types else "")).strip()
+        if review_type not in allowed_review_types:
+            return Response({"detail": "You are not allowed to submit this type of score."}, status=status.HTTP_403_FORBIDDEN)
+
+        round_obj = get_object_or_404(CompetitionRound, pk=request.data.get("round") or request.data.get("round_id"), competition=competition)
+        criterion = get_object_or_404(
+            CompetitionJudgingCriterion,
+            pk=request.data.get("criterion") or request.data.get("criterion_id"),
+            competition=competition,
+        )
+        if not criterion_allows_review_type(criterion, review_type):
+            return Response({"detail": "This criterion cannot be evaluated with the selected review type."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if round_obj.status not in ["closed", "judged"]:
+            return Response({"detail": "Works can be scored only after the round is closed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_score = request.data.get("score")
+        try:
+            score_value = Decimal(str(raw_score))
+        except (InvalidOperation, TypeError, ValueError):
+            return Response({"detail": "Score must be a number."}, status=status.HTTP_400_BAD_REQUEST)
+        if score_value < 0 or score_value > Decimal(str(criterion.max_score)):
+            return Response({"detail": f"Score must be between 0 and {criterion.max_score}."}, status=status.HTTP_400_BAD_REQUEST)
+
+        subject_id = (request.data.get("subject_id") or request.data.get("subjectId") or "").strip()
+        participant_id = request.data.get("subject_participant") or request.data.get("participant_id")
+        team_id = request.data.get("subject_team") or request.data.get("team_id")
+        submission_id = request.data.get("submission") or request.data.get("submission_id")
+        if subject_id.startswith("submission-"):
+            submission_id = subject_id.replace("submission-", "", 1)
+        elif subject_id.startswith("participant-"):
+            participant_id = subject_id.replace("participant-", "", 1)
+        elif subject_id.startswith("team-"):
+            team_id = subject_id.replace("team-", "", 1)
+
+        participant = None
+        team = None
+        submission = None
+        if submission_id:
+            submission = get_object_or_404(
+                CompetitionSubmission.objects.select_related("participant", "team"),
+                pk=submission_id,
+                competition=competition,
+                round=round_obj,
+                status__in=["accepted", "locked"],
+            )
+            participant = submission.participant
+            team = submission.team
+            if participant_id and submission.participant_id and str(participant_id) != str(submission.participant_id):
+                return Response({"detail": "Submission does not belong to the selected participant."}, status=status.HTTP_400_BAD_REQUEST)
+            if team_id and submission.team_id and str(team_id) != str(submission.team_id):
+                return Response({"detail": "Submission does not belong to the selected team."}, status=status.HTTP_400_BAD_REQUEST)
+        elif team_id:
+            team = get_object_or_404(CompetitionTeam, pk=team_id, competition=competition)
+        elif participant_id:
+            participant = get_object_or_404(
+                CompetitionParticipant,
+                pk=participant_id,
+                competition=competition,
+                status="approved",
+                role__in=["participant", "team_member"],
+            )
+        else:
+            return Response({"detail": "Score subject is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        membership = user_competition_membership(request.user, competition)
+        if review_type == "peer_review" and membership:
+            if participant and participant.id == membership.id:
+                return Response({"detail": "Participants cannot peer-review their own work."}, status=status.HTTP_400_BAD_REQUEST)
+            if team and membership.team_id == team.id:
+                return Response({"detail": "Team members cannot peer-review their own team."}, status=status.HTTP_400_BAD_REQUEST)
+
+        lookup = {
+            "competition": competition,
+            "round": round_obj,
+            "criterion": criterion,
+            "judge": request.user,
+            "review_type": review_type,
+            "submission": submission,
+            "subject_participant": participant,
+            "subject_team": team,
+        }
+        try:
+            with transaction.atomic():
+                score_obj, _ = CompetitionScore.objects.update_or_create(
+                    **lookup,
+                    defaults={
+                        "score": score_value,
+                        "comment": (request.data.get("comment") or "").strip(),
+                        "is_final": bool(request.data.get("is_final", request.data.get("finalized", False))),
+                    },
+                )
+        except IntegrityError:
+            score_obj = CompetitionScore.objects.get(**lookup)
+            score_obj.score = score_value
+            score_obj.comment = (request.data.get("comment") or "").strip()
+            score_obj.is_final = bool(request.data.get("is_final", request.data.get("finalized", False)))
+            score_obj.save(update_fields=["score", "comment", "is_final", "updated_at"])
+
+        if review_type == "manual":
+            CompetitionJudgeAssignment.objects.update_or_create(
+                competition=competition,
+                round=round_obj,
+                judge=request.user,
+                assignment_type="manual",
+                defaults={"status": "completed" if score_obj.is_final else "accepted"},
+            )
+
+        return Response({
+            "score": CompetitionScoreSerializer(score_obj, context={"request": request}).data,
+            "round_scores": build_round_score_tables(competition, request),
+            "judge_workspace": build_judge_workspace(competition, request),
+        }, status=status.HTTP_201_CREATED)
+
+
+class CompetitionScoreDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        score_obj = get_object_or_404(
+            CompetitionScore.objects.select_related("competition", "round", "judge"),
+            pk=pk,
+        )
+        if score_obj.competition.results_frozen:
+            return Response({"detail": "Results are frozen for this competition."}, status=status.HTTP_400_BAD_REQUEST)
+        if score_obj.judge_id != request.user.id and not user_can_edit_competition(request.user, score_obj.competition):
+            return Response({"detail": "You can delete only your own score."}, status=status.HTTP_403_FORBIDDEN)
+        competition = score_obj.competition
+        score_obj.delete()
+        return Response({
+            "round_scores": build_round_score_tables(competition, request),
+            "judge_workspace": build_judge_workspace(competition, request),
         })

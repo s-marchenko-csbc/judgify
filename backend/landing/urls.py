@@ -23,6 +23,9 @@ from .views import (
     TeamManagementView,
     CompetitionResultsView,
     CompetitionJudgingView,
+    CompetitionSubmissionsView,
+    CompetitionSubmissionReviewView,
+    CompetitionScoreDetailView,
     ProfileDashboardView,
     CompetitionDraftListCreateView,
     CompetitionBuilderDetailView,
@@ -81,6 +84,9 @@ urlpatterns = [
     path("me/teams/<int:pk>/", TeamManagementView.as_view(), name="my-team-management"),
 
     # results / judging
+    path("competitions/<int:pk>/submissions/", CompetitionSubmissionsView.as_view(), name="competition-submissions"),
+    path("competition-submissions/<int:pk>/review/", CompetitionSubmissionReviewView.as_view(), name="competition-submission-review"),
     path("competitions/<int:pk>/results/", CompetitionResultsView.as_view(), name="competition-results"),
     path("competitions/<int:pk>/judging/", CompetitionJudgingView.as_view(), name="competition-judging"),
+    path("competition-scores/<int:pk>/", CompetitionScoreDetailView.as_view(), name="competition-score-detail"),
 ]

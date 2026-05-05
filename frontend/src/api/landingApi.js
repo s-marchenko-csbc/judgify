@@ -43,6 +43,30 @@ export function fetchCompetitionJudging(id) {
   return apiRequest(`/competitions/${id}/judging/`);
 }
 
+export function fetchCompetitionSubmissions(id) {
+  return apiRequest(`/competitions/${id}/submissions/`);
+}
+
+export function submitCompetitionWork(id, payload = {}) {
+  return apiRequest(`/competitions/${id}/submissions/`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function submitCompetitionScore(id, payload = {}) {
+  return apiRequest(`/competitions/${id}/judging/`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteCompetitionScore(id) {
+  return apiRequest(`/competition-scores/${id}/`, {
+    method: "DELETE",
+  });
+}
+
 export function joinCompetition(id, payload = {}) {
   return apiRequest(`/competitions/${id}/join/`, {
     method: "POST",

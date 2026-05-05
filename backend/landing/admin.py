@@ -4,6 +4,7 @@ from .models import (
     UserProfile, UserFile, RecentlyViewedCompetition, RecentlyViewedMaterial, Badge, UserBadge, Certificate, UserMaterial,
     CompetitionTeam, CompetitionParticipant, CompetitionJoinRequest,
     CompetitionRound, CompetitionSubmissionSettings, CompetitionJudgingCriterion,
+    CompetitionSubmission, CompetitionJudgeAssignment, CompetitionScore,
     CompetitionAward, CompetitionInvitation, OutboundMessage,
 )
 
@@ -83,18 +84,39 @@ class CompetitionJoinRequestAdmin(admin.ModelAdmin):
 
 @admin.register(CompetitionRound)
 class CompetitionRoundAdmin(admin.ModelAdmin):
-    list_display = ("competition", "title", "starts_at", "ends_at", "submission_required", "sort_order")
-    list_filter = ("submission_required",)
+    list_display = ("competition", "title", "status", "starts_at", "ends_at", "submission_required", "sort_order")
+    list_filter = ("status", "submission_required")
 
 
 @admin.register(CompetitionSubmissionSettings)
 class CompetitionSubmissionSettingsAdmin(admin.ModelAdmin):
-    list_display = ("competition", "submission_mode", "max_file_size_mb", "max_submissions")
+    list_display = ("competition", "submission_mode", "submission_policy", "max_file_size_mb", "max_submissions")
 
 
 @admin.register(CompetitionJudgingCriterion)
 class CompetitionJudgingCriterionAdmin(admin.ModelAdmin):
     list_display = ("competition", "title", "judging_mode", "max_score", "weight")
+
+
+@admin.register(CompetitionSubmission)
+class CompetitionSubmissionAdmin(admin.ModelAdmin):
+    list_display = ("id", "competition", "round", "participant", "team", "status", "updated_at")
+    list_filter = ("status", "competition", "round")
+    search_fields = ("title", "participant__display_name", "team__name", "competition__name")
+
+
+@admin.register(CompetitionJudgeAssignment)
+class CompetitionJudgeAssignmentAdmin(admin.ModelAdmin):
+    list_display = ("id", "competition", "round", "judge", "assignment_type", "status", "updated_at")
+    list_filter = ("assignment_type", "status", "competition")
+    search_fields = ("judge__username", "judge__email", "competition__name")
+
+
+@admin.register(CompetitionScore)
+class CompetitionScoreAdmin(admin.ModelAdmin):
+    list_display = ("id", "competition", "round", "criterion", "judge", "review_type", "score", "is_final", "updated_at")
+    list_filter = ("review_type", "is_final", "competition", "round")
+    search_fields = ("criterion__title", "judge__username", "judge__email", "subject_participant__display_name", "subject_team__name")
 
 
 @admin.register(CompetitionAward)

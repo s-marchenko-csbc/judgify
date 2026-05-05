@@ -9,7 +9,7 @@ import CompetitionTabContent from "../components/competition/CompetitionTabConte
 import JoinCompetitionModal from "../components/competition/JoinCompetitionModal";
 import { useAuth } from "../context/AuthContext";
 
-import { fetchCompetitionDetail, fetchCompetitions, fetchCompetitionParticipants, fetchCompetitionResults, fetchCompetitionJudging } from "../api/landingApi";
+import { fetchCompetitionDetail, fetchCompetitions, fetchCompetitionParticipants, fetchCompetitionResults, fetchCompetitionJudging, submitCompetitionScore, submitCompetitionWork, deleteCompetitionScore } from "../api/landingApi";
 
 function capitalize(value) {
   if (!value) return "";
@@ -72,8 +72,8 @@ function enrichCompetition(baseCompetition) {
     })),
     announcements: baseCompetition?.announcements || [],
     participants: baseCompetition?.participants || [],
-    results: baseCompetition?.results || { roundHistory: [], leaderboard: [] },
-    judging: baseCompetition?.judging || { mode: "not configured", metrics: [] },
+    results: baseCompetition?.results || { roundHistory: [], leaderboard: [], roundScores: [] },
+    judging: baseCompetition?.judging || { mode: "not configured", metrics: [], criteria: [], round_scores: [], my_submissions: [] },
   };
 }
 
@@ -141,6 +141,7 @@ export default function CompetitionPage() {
             name: item.name,
             score: item.score,
           })),
+          roundScores: resultsData.round_scores || [],
         };
         const judging = judgingResponse.status === "fulfilled" ? judgingResponse.value : { mode: "not configured", metrics: [] };
         if (isMounted) {
@@ -237,6 +238,58 @@ export default function CompetitionPage() {
     setCommentText("");
   };
 
+  const handleScoreSubmit = async (payload) => {
+    const response = await submitCompetitionScore(id, payload);
+    setCompetition((prev) =>
+      enrichCompetition({
+        ...prev,
+        judging: {
+          ...(prev?.judging || {}),
+          round_scores: response.round_scores || prev?.judging?.round_scores || [],
+          judge_workspace: response.judge_workspace || prev?.judging?.judge_workspace || null,
+        },
+        results: {
+          ...(prev?.results || {}),
+          roundScores: response.round_scores || prev?.results?.roundScores || [],
+        },
+      })
+    );
+    return response;
+  };
+
+  const handleSubmissionCreate = async (payload) => {
+    const submission = await submitCompetitionWork(id, payload);
+    setCompetition((prev) =>
+      enrichCompetition({
+        ...prev,
+        judging: {
+          ...(prev?.judging || {}),
+          my_submissions: [submission, ...(prev?.judging?.my_submissions || [])],
+        },
+      })
+    );
+    return submission;
+  };
+
+  const handleScoreDelete = async (scoreId) => {
+    const response = await deleteCompetitionScore(scoreId);
+    setCompetition((prev) =>
+      enrichCompetition({
+        ...prev,
+        judging: {
+          ...(prev?.judging || {}),
+          round_scores: response.round_scores || prev?.judging?.round_scores || [],
+          judge_workspace: response.judge_workspace || prev?.judging?.judge_workspace || null,
+        },
+        results: {
+          ...(prev?.results || {}),
+          roundScores: response.round_scores || prev?.results?.roundScores || [],
+        },
+      })
+    );
+    return response;
+  };
+
   const pageTitle = useMemo(
     () => competition?.name || "Competition",
     [competition]
@@ -280,6 +333,9 @@ export default function CompetitionPage() {
                 commentText={commentText}
                 onCommentTextChange={setCommentText}
                 onCommentPost={handleCommentPost}
+                onScoreSubmit={handleScoreSubmit}
+                onSubmissionCreate={handleSubmissionCreate}
+                onScoreDelete={handleScoreDelete}
               />
             </main>
 

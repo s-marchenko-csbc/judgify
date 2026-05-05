@@ -1370,6 +1370,9 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
 .judging-mode-line {
   margin-bottom: 16px;
   color: #4a5160;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
 }
 
 .judging-metric-list {
@@ -1386,6 +1389,166 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   display: flex;
   justify-content: space-between;
   gap: 12px;
+}
+
+.judging-round-list,
+.results-round-score-section {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.judging-round-block,
+.judge-scorecard,
+.results-round-score-block {
+  background: #f8f8fc;
+  border: 1px solid #eaebf2;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.judging-round-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.judging-round-heading h3,
+.results-round-score-section h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.judging-round-heading span {
+  color: #5f6674;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.judging-table-scroll {
+  overflow-x: auto;
+}
+
+.judging-score-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
+.judging-score-table th,
+.judging-score-table td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid #e5e7ef;
+  vertical-align: top;
+}
+
+.judging-score-table small {
+  display: block;
+  margin-top: 4px;
+  color: #687081;
+}
+
+.scorecard-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.scorecard-controls label {
+  display: grid;
+  gap: 6px;
+  color: #4a5160;
+  font-size: 13px;
+}
+
+.scorecard-controls select,
+.scorecard-table input,
+.scorecard-table textarea,
+.submission-form input,
+.submission-form textarea {
+  width: 100%;
+  border: 1px solid #d7dbea;
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: #fff;
+  color: #1c2433;
+  font: inherit;
+  resize: vertical;
+}
+
+.scorecard-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.scorecard-actions button {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #1f4fd7;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scorecard-actions button:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
+.submission-form {
+  display: grid;
+  gap: 10px;
+}
+
+.submission-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.submission-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #e5e7ef;
+}
+
+.submission-row small {
+  display: block;
+  margin-top: 4px;
+  color: #687081;
+}
+
+.submission-row span {
+  color: #4a5160;
+  overflow-wrap: anywhere;
+}
+
+.score-delete-btn {
+  display: block;
+  margin-top: 6px;
+  border: 0;
+  background: transparent;
+  color: #b03030;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.judging-empty {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 12px;
+  background: #f8f8fc;
+  color: #687081;
 }
 
 .competition-page-state {
@@ -1501,6 +1664,14 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   }
 
   .judging-metric-list {
+    grid-template-columns: 1fr;
+  }
+
+  .scorecard-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .submission-row {
     grid-template-columns: 1fr;
   }
 

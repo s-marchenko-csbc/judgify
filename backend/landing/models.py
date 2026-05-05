@@ -8,6 +8,7 @@ from django.utils.text import slugify
 class Competition(models.Model):
     STATUS_CHOICES = [
         ("draft", "Draft"),
+        ("published", "Published"),
         ("upcoming", "Upcoming"),
         ("registration_open", "Registration Open"),
         ("active", "Active"),
@@ -44,6 +45,17 @@ class Competition(models.Model):
         ("pending", "Pending administrator approval"),
         ("approved", "Approved"),
         ("rejected", "Rejected"),
+    ]
+
+    JUDGING_AGGREGATION_CHOICES = [
+        ("average", "Average"),
+        ("sum", "Sum"),
+    ]
+
+    JUDGING_VISIBILITY_CHOICES = [
+        ("aggregate", "Aggregate scores only"),
+        ("open", "Show judge scores"),
+        ("anonymous", "Anonymous judge scores"),
     ]
 
     INDUSTRY_CHOICES = [
@@ -113,6 +125,21 @@ class Competition(models.Model):
     max_team_size = models.PositiveIntegerField(default=4)
     allow_user_team_invites = models.BooleanField(default=True)
     allow_organizer_team_assignment = models.BooleanField(default=True)
+
+    manual_judging_enabled = models.BooleanField(default=True)
+    automatic_judging_enabled = models.BooleanField(default=False)
+    peer_review_enabled = models.BooleanField(default=False)
+    judging_aggregation = models.CharField(
+        max_length=16,
+        choices=JUDGING_AGGREGATION_CHOICES,
+        default="average",
+    )
+    judging_visibility = models.CharField(
+        max_length=16,
+        choices=JUDGING_VISIBILITY_CHOICES,
+        default="aggregate",
+    )
+    results_frozen = models.BooleanField(default=False)
 
     setup_step = models.PositiveSmallIntegerField(default=1)
     completion_percent = models.PositiveSmallIntegerField(default=0)
@@ -211,6 +238,14 @@ class UserCompetitionWatch(models.Model):
 
 
 class CompetitionRound(models.Model):
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("scheduled", "Scheduled"),
+        ("active", "Active"),
+        ("closed", "Closed"),
+        ("judged", "Judged"),
+    ]
+
     competition = models.ForeignKey(
         Competition,
         on_delete=models.CASCADE,
@@ -218,6 +253,7 @@ class CompetitionRound(models.Model):
     )
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="draft", db_index=True)
     starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
     submission_required = models.BooleanField(default=True)
@@ -244,12 +280,19 @@ class CompetitionSubmissionSettings(models.Model):
         ("mixed", "Mixed"),
     ]
 
+    SUBMISSION_POLICY_CHOICES = [
+        ("single", "Single submission"),
+        ("latest", "Latest submission wins"),
+        ("multiple", "Multiple submissions"),
+    ]
+
     competition = models.OneToOneField(
         Competition,
         on_delete=models.CASCADE,
         related_name="submission_settings",
     )
     submission_mode = models.CharField(max_length=32, choices=SUBMISSION_MODE_CHOICES, default="mixed")
+    submission_policy = models.CharField(max_length=16, choices=SUBMISSION_POLICY_CHOICES, default="single")
     allowed_file_types = models.JSONField(default=list, blank=True)
     max_file_size_mb = models.PositiveIntegerField(default=25)
     max_submissions = models.PositiveIntegerField(default=1)
@@ -265,6 +308,7 @@ class CompetitionJudgingCriterion(models.Model):
     JUDGING_MODE_CHOICES = [
         ("manual", "Manual judging"),
         ("automatic", "Automatic judging"),
+        ("peer_review", "Peer review"),
         ("mixed", "Mixed judging"),
         ("public_voting", "Public voting"),
     ]
@@ -398,6 +442,10 @@ class OutboundMessage(models.Model):
 
 class CompetitionMaterial(models.Model):
     MATERIAL_TYPE_CHOICES = [
+        ("file", "File"),
+        ("link", "Link"),
+        ("video", "Video"),
+        ("repository", "Repository"),
         ("rules", "Rules"),
         ("dataset", "Dataset"),
         ("template", "Template"),
@@ -625,6 +673,7 @@ class CompetitionJoinRequest(models.Model):
         ("pending", "Pending"),
         ("approved", "Approved"),
         ("rejected", "Rejected"),
+        ("withdrawn", "Withdrawn"),
     ]
 
     ROLE_CHOICES = [
@@ -669,6 +718,208 @@ class CompetitionJoinRequest(models.Model):
 
     def __str__(self):
         return f"{self.user} -> {self.competition} ({self.role})"
+
+
+class CompetitionSubmission(models.Model):
+    STATUS_CHOICES = [
+        ("created", "Created"),
+        ("validated", "Validated"),
+        ("accepted", "Accepted"),
+        ("rejected", "Rejected"),
+        ("locked", "Locked"),
+    ]
+
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="submissions",
+    )
+    round = models.ForeignKey(
+        CompetitionRound,
+        on_delete=models.CASCADE,
+        related_name="submissions",
+    )
+    participant = models.ForeignKey(
+        CompetitionParticipant,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="submissions",
+    )
+    team = models.ForeignKey(
+        CompetitionTeam,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="submissions",
+    )
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="competition_submissions",
+    )
+    title = models.CharField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
+    repository_url = models.URLField(blank=True)
+    demo_url = models.URLField(blank=True)
+    file = models.ForeignKey(
+        "UserFile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="competition_submissions",
+    )
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="created", db_index=True)
+    locked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["round__sort_order", "-created_at"]
+
+    def __str__(self):
+        subject = self.team.name if self.team else (self.participant.display_name if self.participant else "Submission")
+        return f"{self.competition.name}: {subject} / {self.round.title}"
+
+
+class CompetitionJudgeAssignment(models.Model):
+    ASSIGNMENT_TYPE_CHOICES = [
+        ("manual", "Manual judge"),
+        ("peer_review", "Peer reviewer"),
+        ("automatic", "Automatic evaluator"),
+    ]
+
+    STATUS_CHOICES = [
+        ("invited", "Invited"),
+        ("accepted", "Accepted"),
+        ("declined", "Declined"),
+        ("completed", "Completed"),
+    ]
+
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="judge_assignments",
+    )
+    round = models.ForeignKey(
+        CompetitionRound,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="judge_assignments",
+    )
+    judge = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="competition_judge_assignments",
+    )
+    assignment_type = models.CharField(max_length=16, choices=ASSIGNMENT_TYPE_CHOICES, default="manual", db_index=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="invited", db_index=True)
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sent_judge_assignments",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["competition", "round__sort_order", "judge_id"]
+        unique_together = ("competition", "round", "judge", "assignment_type")
+
+    def __str__(self):
+        return f"{self.judge} judges {self.competition.name} ({self.assignment_type})"
+
+
+class CompetitionScore(models.Model):
+    REVIEW_TYPE_CHOICES = [
+        ("automatic", "Automatic"),
+        ("manual", "Manual judge"),
+        ("peer_review", "Peer review"),
+    ]
+
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="scores",
+    )
+    round = models.ForeignKey(
+        CompetitionRound,
+        on_delete=models.CASCADE,
+        related_name="scores",
+    )
+    criterion = models.ForeignKey(
+        CompetitionJudgingCriterion,
+        on_delete=models.CASCADE,
+        related_name="scores",
+    )
+    judge = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="competition_scores",
+    )
+    subject_participant = models.ForeignKey(
+        CompetitionParticipant,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="received_scores",
+    )
+    subject_team = models.ForeignKey(
+        CompetitionTeam,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="received_scores",
+    )
+    submission = models.ForeignKey(
+        CompetitionSubmission,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="scores",
+    )
+    review_type = models.CharField(max_length=16, choices=REVIEW_TYPE_CHOICES, db_index=True)
+    score = models.DecimalField(max_digits=8, decimal_places=2)
+    comment = models.TextField(blank=True)
+    is_final = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["round__sort_order", "subject_team_id", "subject_participant_id", "criterion__sort_order", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["competition", "round", "criterion", "judge", "review_type", "submission"],
+                condition=models.Q(submission__isnull=False),
+                name="uniq_score_by_submission",
+            ),
+            models.UniqueConstraint(
+                fields=["competition", "round", "criterion", "judge", "review_type", "subject_participant"],
+                condition=models.Q(submission__isnull=True, subject_participant__isnull=False),
+                name="uniq_score_by_participant",
+            ),
+            models.UniqueConstraint(
+                fields=["competition", "round", "criterion", "judge", "review_type", "subject_team"],
+                condition=models.Q(submission__isnull=True, subject_team__isnull=False),
+                name="uniq_score_by_team",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["competition", "round", "review_type"]),
+            models.Index(fields=["competition", "subject_participant"]),
+            models.Index(fields=["competition", "subject_team"]),
+        ]
+
+    def __str__(self):
+        subject = self.subject_team or self.subject_participant or self.submission
+        return f"{self.competition.name}: {subject} / {self.criterion.title} = {self.score}"
 
 
 class CompetitionRoundResult(models.Model):
