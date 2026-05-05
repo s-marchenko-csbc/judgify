@@ -1,23 +1,25 @@
 import React from "react";
 import { useAuth } from "../../context/AuthContext";
+import { useLanguage } from "../../context/LanguageContext";
 
-function getJoinState(competition, currentUser) {
+function getJoinState(competition, currentUser, t) {
   const role = currentUser?.primaryRole;
   if (role !== "participant") return null;
 
   const status = competition?.user_participation_status || "none";
-  const team = competition?.user_team?.name ? ` · ${competition.user_team.name}` : "";
+  const team = competition?.user_team?.name ? ` - ${competition.user_team.name}` : "";
 
-  if (status === "approved") return { label: `Already participating${team}`, disabled: true, className: "joined" };
-  if (status === "pending") return { label: `Pending review${team}`, disabled: true, className: "pending" };
-  if (status === "rejected") return { label: "Request rejected", disabled: false, className: "rejected" };
+  if (status === "approved") return { label: `${t("competitionHeader.alreadyParticipating")}${team}`, disabled: true, className: "joined" };
+  if (status === "pending") return { label: `${t("competitionHeader.pendingReview")}${team}`, disabled: true, className: "pending" };
+  if (status === "rejected") return { label: t("competitionHeader.requestRejected"), disabled: false, className: "rejected" };
   if (competition?.can_join === false) return null;
-  return { label: "Join Competition", disabled: false, className: "" };
+  return { label: t("competitionHeader.join"), disabled: false, className: "" };
 }
 
 export default function CompetitionHeader({ competition, onJoin, onEdit }) {
   const { user } = useAuth();
-  const joinState = getJoinState(competition, user);
+  const { t } = useLanguage();
+  const joinState = getJoinState(competition, user, t);
 
   return (
     <section className="competition-detail-header">
@@ -34,11 +36,14 @@ export default function CompetitionHeader({ competition, onJoin, onEdit }) {
         <div>
           <h1 className="competition-detail-title">{competition.name}</h1>
           <div className="competition-detail-round">
-            Round: {competition.current_round}/{competition.total_rounds}
+            {t("competitionHeader.round", { current: competition.current_round, total: competition.total_rounds })}
           </div>
           {competition.user_team?.name && (
             <div className="competition-user-team-note">
-              Team: {competition.user_team.name} · {competition.user_team.status || "pending"}
+              {t("competitionHeader.team", {
+                name: competition.user_team.name,
+                status: t(`statuses.${competition.user_team.status || "pending"}`, { defaultValue: competition.user_team.status || "pending" }),
+              })}
             </div>
           )}
         </div>
@@ -46,7 +51,7 @@ export default function CompetitionHeader({ competition, onJoin, onEdit }) {
         <div className="competition-header-actions">
           {competition.can_edit && (
             <button type="button" className="competition-edit-btn" onClick={onEdit}>
-              Edit competition
+              {t("competitionHeader.edit")}
             </button>
           )}
           {joinState && (

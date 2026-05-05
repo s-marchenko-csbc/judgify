@@ -1,18 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toggleSavedCompetition } from "../api/savedApi";
+import { useLanguage } from "../context/LanguageContext";
 
-function getStatusLabel(status) {
-  const map = {
-    active: "Online",
-    finished: "Finished",
-    judging: "Judging",
-    archived: "Archived",
-    registration_open: "Registration open",
-    upcoming: "Upcoming",
-  };
-
-  return map[status] || status;
+function getStatusLabel(status, t) {
+  return t(`statuses.${status}`, { defaultValue: status });
 }
 
 function getStatusClass(status) {
@@ -28,8 +20,8 @@ function getStatusClass(status) {
   return map[status] || "status-default";
 }
 
-function formatRemaining(ms) {
-  if (ms === null || ms === undefined) return "No timer";
+function formatRemaining(ms, t) {
+  if (ms === null || ms === undefined) return t("card.noTimer");
   if (ms <= 0) return "00:00:00";
 
   const totalSeconds = Math.floor(ms / 1000);
@@ -39,14 +31,13 @@ function formatRemaining(ms) {
   const seconds = totalSeconds % 60;
 
   if (days > 0) {
-    return `${days}d ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    return `${days}${t("card.dayShort")} ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
 
   return [hours, minutes, seconds]
     .map((v) => String(v).padStart(2, "0"))
     .join(":");
 }
-
 
 function deriveRoundState(item, now) {
   const rounds = Array.isArray(item.rounds) ? item.rounds : [];
@@ -108,6 +99,7 @@ function HeartIcon({ filled = false }) {
 
 export default function CompetitionCard({ item, onSavedChange }) {
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   const [now, setNow] = useState(Date.now());
   const [saved, setSaved] = useState(Boolean(item.is_saved));
@@ -137,7 +129,7 @@ export default function CompetitionCard({ item, onSavedChange }) {
       : roundState.status;
 
   const hasUserParticipation = ["approved", "pending"].includes(item.user_participation_status);
-  const participationHint = item.user_participation_status === "pending" ? "Pending review" : "";
+  const participationHint = item.user_participation_status === "pending" ? t("card.pendingReview") : "";
 
   const isDanger =
     remainingMs !== null &&
@@ -201,7 +193,7 @@ export default function CompetitionCard({ item, onSavedChange }) {
       >
         {item.status !== "archived" && remainingMs !== null && (
           <div className={`card-timer ${isDanger ? "danger" : ""}`}>
-            {formatRemaining(remainingMs)}
+            {formatRemaining(remainingMs, t)}
           </div>
         )}
 
@@ -209,8 +201,8 @@ export default function CompetitionCard({ item, onSavedChange }) {
           type="button"
           className={`card-bookmark-btn ${saved ? "saved" : ""}`}
           onClick={handleSavedClick}
-          aria-label={saved ? "Remove from saved" : "Save competition"}
-          title={saved ? "Remove from saved" : "Save competition"}
+          aria-label={saved ? t("card.removeSaved") : t("card.save")}
+          title={saved ? t("card.removeSaved") : t("card.save")}
           disabled={saving}
         >
           <HeartIcon filled={saved} />
@@ -231,7 +223,7 @@ export default function CompetitionCard({ item, onSavedChange }) {
         </div>
 
         <div className="card-round">
-          Round: {roundState.currentRound}/{roundState.totalRounds}
+          {t("card.round", { current: roundState.currentRound, total: roundState.totalRounds })}
         </div>
 
         {item.short_description && (
@@ -240,9 +232,9 @@ export default function CompetitionCard({ item, onSavedChange }) {
       </div>
 
       <div className="card-footer">
-        <span>👤 {item.participants_count} participants</span>
+        <span>{t("card.participants", { count: item.participants_count })}</span>
         <span className={getStatusClass(uiStatus)}>
-          {getStatusLabel(uiStatus)}
+          {getStatusLabel(uiStatus, t)}
         </span>
         {participationHint && <span className="card-participation-hint">{participationHint}</span>}
       </div>

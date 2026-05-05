@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useLanguage } from "../context/LanguageContext";
 
 const demoAccounts = [
   {
@@ -72,8 +73,8 @@ function uniqueAccounts(accounts) {
   });
 }
 
-function initials(user) {
-  const label = user?.displayName || user?.username || user?.email || "User";
+function initials(user, t) {
+  const label = user?.displayName || user?.username || user?.email || t("account.user");
   return label.slice(0, 1).toUpperCase();
 }
 
@@ -81,31 +82,33 @@ function avatarUrl(user) {
   return user?.avatarUrl || user?.avatar_url || user?.avatar?.url || user?.profile?.avatar_url || "";
 }
 
-function Avatar({ user, className = "account-avatar" }) {
+function Avatar({ user, t, className = "account-avatar" }) {
   const url = avatarUrl(user);
   if (url) return <img className={className} src={url} alt="" />;
-  return <span className={className}>{initials(user)}</span>;
+  return <span className={className}>{initials(user, t)}</span>;
 }
 
-function AccountMenu({ user, onProfile, onSwitchAccount, onLogout, style, menuRef }) {
+function AccountMenu({ user, onProfile, onSwitchAccount, onLogout, style, menuRef, t }) {
   const switchableAccounts = uniqueAccounts([...(user ? [user] : []), ...readStoredAccounts(), ...demoAccounts]);
+  const roleLabel = (role) => t(`roles.${role || "participant"}`, { defaultValue: role || "participant" });
+
   return (
     <div className="account-menu account-menu-portal" style={style} ref={menuRef}>
       <div className="account-menu-current">
-        <Avatar user={user} className="account-avatar-large" />
+        <Avatar user={user} t={t} className="account-avatar-large" />
         <div>
-          <strong>{user?.displayName || user?.username || "Current user"}</strong>
+          <strong>{user?.displayName || user?.username || t("account.currentUser")}</strong>
           <span>{user?.email}</span>
-          <small>{user?.primaryRole || "participant"}</small>
+          <small>{roleLabel(user?.primaryRole)}</small>
         </div>
       </div>
 
       <button type="button" className="account-profile-link" onClick={onProfile}>
-        Open profile
+        {t("account.openProfile")}
       </button>
 
       <div className="account-menu-divider" />
-      <span className="account-menu-caption">Switch account</span>
+      <span className="account-menu-caption">{t("account.switchAccount")}</span>
       {switchableAccounts.map((account) => {
         const isCurrent = account.accountKey === user?.accountKey || account.username === user?.username;
         return (
@@ -118,16 +121,16 @@ function AccountMenu({ user, onProfile, onSwitchAccount, onLogout, style, menuRe
             <span>{account.displayName.slice(0, 1)}</span>
             <div>
               <strong>{account.displayName}</strong>
-              <small>{account.primaryRole} · {account.email}</small>
+              <small>{roleLabel(account.primaryRole)} - {account.email}</small>
             </div>
-            {isCurrent && <em>✓</em>}
+            {isCurrent && <em>OK</em>}
           </button>
         );
       })}
 
       <div className="account-menu-divider" />
       <button type="button" className="account-logout-btn" onClick={onLogout}>
-        Sign out
+        {t("account.signOut")}
       </button>
     </div>
   );
@@ -136,6 +139,7 @@ function AccountMenu({ user, onProfile, onSwitchAccount, onLogout, style, menuRe
 export default function AccountSwitcher({ compact = false }) {
   const navigate = useNavigate();
   const { user, login, logout } = useAuth();
+  const { t } = useLanguage();
   const [open, setOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState({});
   const triggerRef = useRef(null);
@@ -200,10 +204,10 @@ export default function AccountSwitcher({ compact = false }) {
         type="button"
         ref={triggerRef}
         onClick={() => setOpen((value) => !value)}
-        title="Account menu"
-        aria-label="Account menu"
+        title={t("account.accountMenu")}
+        aria-label={t("account.accountMenu")}
       >
-        <Avatar user={user} />
+        <Avatar user={user} t={t} />
       </button>
 
       {open && createPortal(
@@ -214,6 +218,7 @@ export default function AccountSwitcher({ compact = false }) {
           onProfile={handleProfile}
           onSwitchAccount={switchAccount}
           onLogout={handleLogout}
+          t={t}
         />,
         document.body
       )}

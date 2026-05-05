@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useLanguage } from "../../context/LanguageContext";
 
 const suggestedInterests = [
   "Programming",
@@ -12,6 +13,7 @@ const suggestedInterests = [
 ];
 
 export default function OnboardModal({ onFinish }) {
+  const { t } = useLanguage();
   const [input, setInput] = useState("");
   const [interests, setInterests] = useState([]);
   const [createTeam, setCreateTeam] = useState(false);
@@ -48,14 +50,14 @@ export default function OnboardModal({ onFinish }) {
         <div className="auth-modal-logo">Judgify</div>
 
         <div className="onboarding-card">
-          <div className="onboarding-title">Tell us more</div>
-          <div className="onboarding-subtitle">Choose your interests</div>
+          <div className="onboarding-title">{t("onboarding.title")}</div>
+          <div className="onboarding-subtitle">{t("onboarding.subtitle")}</div>
           <div className="onboarding-subtitle secondary">
-            You can update this later in your profile.
+            {t("onboarding.secondary")}
           </div>
 
           <div className="form-field">
-            <label>Interests</label>
+            <label>{t("onboarding.interests")}</label>
 
             <div className="interests-input-wrapper">
               <div className="selected-tags">
@@ -78,7 +80,7 @@ export default function OnboardModal({ onFinish }) {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type interest and press Enter"
+                placeholder={t("onboarding.interestPlaceholder")}
               />
             </div>
 
@@ -104,7 +106,7 @@ export default function OnboardModal({ onFinish }) {
               checked={createTeam}
               onChange={(e) => setCreateTeam(e.target.checked)}
             />
-            <span>Create team after registration</span>
+            <span>{t("onboarding.createTeam")}</span>
           </label>
 
           <div className="onboarding-actions single">
@@ -118,7 +120,7 @@ export default function OnboardModal({ onFinish }) {
                 })
               }
             >
-              Continue
+              {t("onboarding.continue")}
             </button>
           </div>
         </div>

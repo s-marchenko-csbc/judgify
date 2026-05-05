@@ -7,10 +7,12 @@ import CompetitionPage from "./pages/CompetitionPage"
 import CompetitionBuilderPage from "./pages/CompetitionBuilderPage"
 import AppSplash from "./components/AppSplash";
 import { API_BASE } from "./api/client";
+import { useLanguage } from "./context/LanguageContext";
 
 export default function App() {
+  const { t } = useLanguage();
   const [backendReady, setBackendReady] = useState(false);
-  const [loadingHint, setLoadingHint] = useState("Starting backend and database...");
+  const [loadingHintKey, setLoadingHintKey] = useState("splash.starting");
 
   useEffect(() => {
     let cancelled = false;
@@ -33,11 +35,11 @@ export default function App() {
           }
 
           if (!cancelled) {
-            setLoadingHint("Loading demo competitions...");
+            setLoadingHintKey("splash.loadingDemo");
           }
         } catch (error) {
           if (!cancelled && attempt > 3) {
-            setLoadingHint("Waiting for API connection...");
+            setLoadingHintKey("splash.waitingApi");
           }
         }
 
@@ -52,7 +54,7 @@ export default function App() {
   }, []);
 
   if (!backendReady) {
-    return <AppSplash hint={loadingHint} />;
+    return <AppSplash hint={t(loadingHintKey)} />;
   }
 
   return (

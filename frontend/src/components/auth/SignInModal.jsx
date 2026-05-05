@@ -1,6 +1,8 @@
 import React, { useState } from "react";
+import { useLanguage } from "../../context/LanguageContext";
 
 export default function SignInModal({ isOpen, onClose, onOpenSignUp, onComplete }) {
+  const { t } = useLanguage();
   const [form, setForm] = useState({ email: "", password: "" });
   const [busy, setBusy] = useState(false);
 
@@ -14,7 +16,7 @@ export default function SignInModal({ isOpen, onClose, onOpenSignUp, onComplete 
     e.preventDefault();
 
     if (!form.email || !form.password) {
-      alert("Enter email and password.");
+      alert(t("auth.enterEmailPassword"));
       return;
     }
 
@@ -63,19 +65,19 @@ export default function SignInModal({ isOpen, onClose, onOpenSignUp, onComplete 
   return (
     <div className="auth-modal-overlay" onClick={onClose}>
       <div className="auth-modal signin-modal" onClick={(e) => e.stopPropagation()}>
-        <button className="auth-modal-close" onClick={onClose} aria-label="Close">
-          ×
+        <button className="auth-modal-close" onClick={onClose} aria-label={t("auth.close")}>
+          x
         </button>
 
         <div className="auth-modal-logo">Judgify</div>
-        <div className="auth-modal-subtitle">Welcome back</div>
+        <div className="auth-modal-subtitle">{t("auth.welcomeBack")}</div>
         <div className="auth-modal-caption">
-          Sign in to manage saved competitions, applications and organizer tools.
+          {t("auth.signInCaption")}
         </div>
 
         <form className="email-signup-form" onSubmit={handleSubmit}>
           <div className="form-field">
-            <label>Email</label>
+            <label>{t("auth.email")}</label>
             <input
               type="email"
               value={form.email}
@@ -85,37 +87,37 @@ export default function SignInModal({ isOpen, onClose, onOpenSignUp, onComplete 
           </div>
 
           <div className="form-field">
-            <label>Password</label>
+            <label>{t("auth.password")}</label>
             <input
               type="password"
               value={form.password}
               onChange={(e) => handleChange("password", e.target.value)}
-              placeholder="Password"
+              placeholder={t("auth.passwordPlaceholder")}
             />
           </div>
 
           <button type="submit" className="create-account-btn" disabled={busy}>
-            {busy ? "Signing in..." : "Sign in"}
+            {busy ? t("auth.signingIn") : t("auth.signInAction")}
           </button>
         </form>
 
         <div className="auth-divider">
-          <span>OR</span>
+          <span>{t("auth.or")}</span>
         </div>
 
         <div className="signin-demo-actions">
           <button className="continue-email-btn" type="button" onClick={() => handleDemoLogin("organizer")} disabled={busy}>
-            Continue as organizer demo
+            {t("auth.continueOrganizerDemo")}
           </button>
           <button className="continue-email-btn admin-demo-btn" type="button" onClick={() => handleDemoLogin("admin")} disabled={busy}>
-            Continue as administrator demo
+            {t("auth.continueAdminDemo")}
           </button>
         </div>
 
         <div className="auth-bottom-link">
-          No account yet?{" "}
+          {t("auth.noAccount")}{" "}
           <button type="button" className="auth-link-btn" onClick={onOpenSignUp}>
-            Create account
+            {t("auth.createAccount")}
           </button>
         </div>
       </div>

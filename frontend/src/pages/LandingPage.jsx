@@ -15,6 +15,7 @@ import {
 } from "../api/landingApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useLanguage } from "../context/LanguageContext";
 
 const initialFilters = {
   search: "",
@@ -36,6 +37,7 @@ function mergeSavedState(items, savedIds) {
 
 export default function LandingPage() {
   const { user, login, isAuthenticated } = useAuth();
+  const { t } = useLanguage();
 
   const [filters, setFilters] = useState(initialFilters);
   const [filterOptions, setFilterOptions] = useState(null);
@@ -259,7 +261,7 @@ export default function LandingPage() {
           />
 
           {loading ? (
-            <div>Loading...</div>
+            <div>{t("landing.loading")}</div>
           ) : (
             <div
               className={`competition-grid ${

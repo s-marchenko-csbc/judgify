@@ -44,6 +44,7 @@ function withStoredProfile(user) {
     country: "Ukraine",
     organization: "",
     bio: "",
+    language: "",
     interests: [],
     skills: [],
     ...user,

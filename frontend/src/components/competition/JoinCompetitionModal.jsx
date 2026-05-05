@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { joinCompetition } from "../../api/landingApi";
+import { useLanguage } from "../../context/LanguageContext";
 
 const roles = [
-  { id: "participant", label: "Individual participant" },
-  { id: "team_member", label: "Team participant" },
+  { id: "participant", labelKey: "joinModal.individual" },
+  { id: "team_member", labelKey: "joinModal.team" },
 ];
 
 function rolesForCompetition(competition) {
@@ -17,6 +18,7 @@ function rolesForCompetition(competition) {
 }
 
 export default function JoinCompetitionModal({ competition, onClose, onSubmitted }) {
+  const { t } = useLanguage();
   const availableRoles = rolesForCompetition(competition);
   const [selectedRole, setSelectedRole] = useState(availableRoles[0]?.id || "participant");
   const [teamName, setTeamName] = useState(competition?.user_team?.name || "");
@@ -27,7 +29,7 @@ export default function JoinCompetitionModal({ competition, onClose, onSubmitted
   const handleSubmit = async () => {
     if (submitting) return;
     if (selectedRole === "team_member" && !teamName.trim()) {
-      setError("Team name is required for team participation.");
+      setError(t("joinModal.teamRequired"));
       return;
     }
 
@@ -42,7 +44,7 @@ export default function JoinCompetitionModal({ competition, onClose, onSubmitted
       });
       onSubmitted?.(result);
     } catch (err) {
-      setError(err.message || "Could not submit join request.");
+      setError(err.message || t("joinModal.submitError"));
     } finally {
       setSubmitting(false);
     }
@@ -51,10 +53,8 @@ export default function JoinCompetitionModal({ competition, onClose, onSubmitted
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="join-modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Join Competition</h2>
-        <p>
-          Submit a participation request. Depending on the access model, it can be approved immediately or reviewed by organizer/administrator.
-        </p>
+        <h2>{t("joinModal.title")}</h2>
+        <p>{t("joinModal.description")}</p>
 
         <div className="join-role-list">
           {availableRoles.map((role) => (
@@ -64,28 +64,28 @@ export default function JoinCompetitionModal({ competition, onClose, onSubmitted
               className={`join-role-btn ${selectedRole === role.id ? "active" : ""}`}
               onClick={() => setSelectedRole(role.id)}
             >
-              {role.label}
+              {t(role.labelKey)}
             </button>
           ))}
         </div>
 
         {selectedRole === "team_member" && (
           <label className="join-field">
-            Team name
+            {t("joinModal.teamName")}
             <input
               value={teamName}
               onChange={(e) => setTeamName(e.target.value)}
-              placeholder="Enter team name or create a new team"
+              placeholder={t("joinModal.teamPlaceholder")}
             />
           </label>
         )}
 
         <label className="join-field">
-          Request note
+          {t("joinModal.note")}
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            placeholder="Optional note for organizer/admin"
+            placeholder={t("joinModal.notePlaceholder")}
           />
         </label>
 
@@ -93,10 +93,14 @@ export default function JoinCompetitionModal({ competition, onClose, onSubmitted
 
         <div className="join-modal-actions">
           <button type="button" className="secondary-btn" onClick={onClose}>
-            Cancel
+            {t("joinModal.cancel")}
           </button>
           <button type="button" className="primary-btn" onClick={handleSubmit} disabled={submitting}>
-            {submitting ? "Submitting..." : competition?.access_mode === "open" ? "Join now" : "Submit for review"}
+            {submitting
+              ? t("joinModal.submitting")
+              : competition?.access_mode === "open"
+                ? t("joinModal.joinNow")
+                : t("joinModal.submitReview")}
           </button>
         </div>
       </div>

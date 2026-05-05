@@ -1,38 +1,32 @@
 import React from "react";
 import { markMaterialViewed } from "../../api/landingApi";
+import { useLanguage } from "../../context/LanguageContext";
 
-function getStatusLabel(status) {
-  const map = {
-    active: "Online",
-    finished: "Finished",
-    judging: "Judging",
-    archived: "Archived",
-    registration_open: "Registration Open",
-    upcoming: "Upcoming",
-  };
-
-  return map[status] || status;
+function getStatusLabel(status, t) {
+  return t(`statuses.${status}`, { defaultValue: status });
 }
 
 export default function CompetitionSidebar({ competition }) {
+  const { t } = useLanguage();
+
   return (
     <div className="competition-detail-sidebar">
       <section className="competition-side-block">
         <h2 className="competition-side-title">{competition.name}</h2>
 
         <div className="competition-status-pill">
-          {getStatusLabel(competition.status)}
+          {getStatusLabel(competition.status, t)}
         </div>
 
         <div className="competition-side-row">
-          <span>Round:</span>
+          <span>{t("competitionSidebar.round")}</span>
           <strong>
             {competition.current_round}/{competition.total_rounds}
           </strong>
         </div>
 
         <div className="competition-side-row">
-          <span>{competition.participants_count} participants</span>
+          <span>{t("card.participants", { count: competition.participants_count })}</span>
           <span className="competition-side-code">
             {competition.organizerCode}
           </span>
@@ -41,24 +35,24 @@ export default function CompetitionSidebar({ competition }) {
         <div className="competition-side-separator" />
 
         <div className="competition-side-row">
-          <span>Category:</span>
+          <span>{t("competitionSidebar.category")}</span>
           <strong>{competition.category}</strong>
         </div>
 
         <div className="competition-side-row">
-          <span>Dates:</span>
+          <span>{t("competitionSidebar.dates")}</span>
           <strong>{competition.datesLabel}</strong>
         </div>
 
         <div className="competition-side-row">
-          <span>Difficulty:</span>
+          <span>{t("competitionSidebar.difficulty")}</span>
           <strong className="difficulty-good">
-            ✔ {competition.difficulty}
+            {competition.difficulty}
           </strong>
         </div>
 
         <div className="competition-side-row">
-          <span>Language:</span>
+          <span>{t("competitionSidebar.language")}</span>
           <strong>{String(competition.language || "uk").toUpperCase()}</strong>
         </div>
       </section>
@@ -68,14 +62,14 @@ export default function CompetitionSidebar({ competition }) {
       </section>
 
       <section className="competition-side-block">
-        <h3 className="competition-block-heading">Upcoming event</h3>
+        <h3 className="competition-block-heading">{t("competitionSidebar.upcomingEvent")}</h3>
         <div className="competition-upcoming-chip">
           {competition.upcomingText}
         </div>
       </section>
 
       <section className="competition-side-block">
-        <h3 className="competition-block-heading">Downloads</h3>
+        <h3 className="competition-block-heading">{t("competitionSidebar.downloads")}</h3>
 
         <div className="competition-download-list">
           {(competition.materials || []).map((item) => (
@@ -91,9 +85,9 @@ export default function CompetitionSidebar({ competition }) {
                 }
               }}
             >
-              <span>{item.icon || "📎"}</span>
+              <span>{item.icon || "M"}</span>
               <span>{item.name}</span>
-              <span>›</span>
+              <span>{">"}</span>
             </a>
           ))}
         </div>

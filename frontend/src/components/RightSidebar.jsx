@@ -1,18 +1,10 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { toggleSavedCompetition } from "../api/savedApi";
+import { useLanguage } from "../context/LanguageContext";
 
-function getStatusLabel(status) {
-  const map = {
-    active: "Online",
-    finished: "Finished",
-    judging: "Judging",
-    archived: "Archived",
-    registration_open: "Registration open",
-    upcoming: "Upcoming",
-  };
-
-  return map[status] || status;
+function getStatusLabel(status, t) {
+  return t(`statuses.${status}`, { defaultValue: status });
 }
 
 function getStatusClass(status) {
@@ -42,7 +34,7 @@ function HeartIcon() {
   );
 }
 
-function CompetitionRecentItem({ item }) {
+function CompetitionRecentItem({ item, t }) {
   return (
     <Link className="recent-item recent-item-link" to={`/competitions/${item.id}`}>
       <div
@@ -52,10 +44,10 @@ function CompetitionRecentItem({ item }) {
       <div className="recent-item-content">
         <div className="recent-item-name">{item.name}</div>
         <div className="recent-item-meta">
-          <span>👤 {item.participants_count}</span>
-          <span>💬 {item.comments_count}</span>
+          <span>{t("card.participants", { count: item.participants_count })}</span>
+          <span>{t("sidebar.comments", { count: item.comments_count })}</span>
           {item.language && <span>{String(item.language).toUpperCase()}</span>}
-          <span className={getStatusClass(item.status)}>{getStatusLabel(item.status)}</span>
+          <span className={getStatusClass(item.status)}>{getStatusLabel(item.status, t)}</span>
         </div>
       </div>
     </Link>
@@ -66,7 +58,7 @@ function MaterialRecentItem({ record }) {
   const material = record.material || {};
   return (
     <a className="recent-item recent-material-item" href={material.url || "#"} target="_blank" rel="noreferrer">
-      <div className="recent-material-icon">📎</div>
+      <div className="recent-material-icon">M</div>
       <div className="recent-item-content">
         <div className="recent-item-name">{material.name}</div>
         <div className="recent-item-meta">
@@ -78,7 +70,7 @@ function MaterialRecentItem({ record }) {
   );
 }
 
-function SavedCard({ item, onSavedChange }) {
+function SavedCard({ item, onSavedChange, t }) {
   const [saving, setSaving] = useState(false);
 
   const handleRemove = async () => {
@@ -101,7 +93,7 @@ function SavedCard({ item, onSavedChange }) {
         to={`/competitions/${item.id}`}
         className="sidebar-card-cover"
         style={item.cover_image ? { backgroundImage: `url(${item.cover_image})` } : undefined}
-        aria-label={`Open ${item.name}`}
+        aria-label={t("sidebar.openCompetition", { name: item.name })}
       />
       <div className="sidebar-card-info">
         <div className="sidebar-card-name-row">
@@ -110,18 +102,18 @@ function SavedCard({ item, onSavedChange }) {
             type="button"
             className="sidebar-heart-btn saved"
             onClick={handleRemove}
-            aria-label="Remove from saved"
-            title="Remove from saved"
+            aria-label={t("card.removeSaved")}
+            title={t("card.removeSaved")}
             disabled={saving}
           >
             <HeartIcon />
           </button>
         </div>
         <div className="sidebar-card-meta">
-          <span>👤 {item.participants_count}</span>
-          <span>💬 {item.comments_count}</span>
+          <span>{t("card.participants", { count: item.participants_count })}</span>
+          <span>{t("sidebar.comments", { count: item.comments_count })}</span>
           {item.language && <span>{String(item.language).toUpperCase()}</span>}
-          <span className={getStatusClass(item.status)}>{getStatusLabel(item.status)}</span>
+          <span className={getStatusClass(item.status)}>{getStatusLabel(item.status, t)}</span>
         </div>
       </div>
     </div>
@@ -148,6 +140,8 @@ function uniqueMaterialRecords(records = []) {
 }
 
 export default function RightSidebar({ data, onSavedChange }) {
+  const { t } = useLanguage();
+
   if (!data) return null;
 
   const recentlyViewed = uniqueById(data.recently_viewed || data.last_competitions || []);
@@ -156,21 +150,21 @@ export default function RightSidebar({ data, onSavedChange }) {
   return (
     <aside className="right-sidebar">
       <section className="right-panel-block">
-        <h3>Recently Viewed</h3>
+        <h3>{t("sidebar.recentlyViewed")}</h3>
         <div className="last-competitions-list">
           {recentlyViewed.length === 0 && recentMaterials.length === 0 ? (
-            <div className="sidebar-empty">No recently viewed items yet.</div>
+            <div className="sidebar-empty">{t("sidebar.emptyRecent")}</div>
           ) : (
             <>
               {recentlyViewed.length > 0 && (
                 <>
-                  <div className="recent-section-title">Competitions</div>
-                  {recentlyViewed.map((item) => <CompetitionRecentItem key={`competition-${item.id}`} item={item} />)}
+                  <div className="recent-section-title">{t("sidebar.competitions")}</div>
+                  {recentlyViewed.map((item) => <CompetitionRecentItem key={`competition-${item.id}`} item={item} t={t} />)}
                 </>
               )}
               {recentMaterials.length > 0 && (
                 <>
-                  <div className="recent-section-title">Materials</div>
+                  <div className="recent-section-title">{t("sidebar.materials")}</div>
                   {recentMaterials.map((record) => <MaterialRecentItem key={`material-${record.material?.id || record.id}`} record={record} />)}
                 </>
               )}
@@ -180,13 +174,13 @@ export default function RightSidebar({ data, onSavedChange }) {
       </section>
 
       <section className="right-panel-block">
-        <h3>Saved</h3>
+        <h3>{t("sidebar.saved")}</h3>
         <div className="sidebar-list">
           {(data.saved_competitions || []).length === 0 ? (
-            <div className="sidebar-empty">No saved competitions yet.</div>
+            <div className="sidebar-empty">{t("sidebar.emptySaved")}</div>
           ) : (
             (data.saved_competitions || []).map((item) => (
-              <SavedCard key={item.id} item={item} onSavedChange={onSavedChange} />
+              <SavedCard key={item.id} item={item} onSavedChange={onSavedChange} t={t} />
             ))
           )}
         </div>

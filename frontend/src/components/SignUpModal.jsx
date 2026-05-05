@@ -1,9 +1,10 @@
 import React, { useState } from "react";
+import { useLanguage } from "../context/LanguageContext";
 
 const roleOptions = [
-  { id: "organizer", label: "Organizer", icon: "♛" },
-  { id: "participant", label: "Participant", icon: "☷" },
-  { id: "viewer", label: "Viewer", icon: "◉" },
+  { id: "organizer", labelKey: "roles.organizer", icon: "O" },
+  { id: "participant", labelKey: "roles.participant", icon: "P" },
+  { id: "viewer", labelKey: "roles.viewer", icon: "V" },
 ];
 
 const initialForm = {
@@ -20,6 +21,7 @@ export default function SignUpModal({
   onOpenSignIn,
   onComplete,
 }) {
+  const { t } = useLanguage();
   const [form, setForm] = useState(initialForm);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -39,12 +41,12 @@ export default function SignUpModal({
     e.preventDefault();
 
     if (!form.username || !form.email || !form.password || !form.confirmPassword) {
-      alert("Please fill in all required fields.");
+      alert(t("auth.fillRequired"));
       return;
     }
 
     if (form.password !== form.confirmPassword) {
-      alert("Passwords do not match.");
+      alert(t("auth.passwordsMismatch"));
       return;
     }
 
@@ -64,76 +66,76 @@ export default function SignUpModal({
   return (
     <div className="auth-modal-overlay signup-screen" onClick={handleClose}>
       <div className="auth-modal signup-panel" onClick={(e) => e.stopPropagation()}>
-        <button className="auth-modal-close" onClick={handleClose} aria-label="Close">
-          ×
+        <button className="auth-modal-close" onClick={handleClose} aria-label={t("auth.close")}>
+          x
         </button>
 
-        <h2 className="signup-title">Sign Up</h2>
+        <h2 className="signup-title">{t("auth.signUpTitle")}</h2>
 
         <form className="signup-form" onSubmit={handleCreateAccount}>
           <div className="signup-field">
-            <label>Username</label>
+            <label>{t("auth.username")}</label>
             <input
               type="text"
               value={form.username}
               onChange={(e) => handleChange("username", e.target.value)}
-              placeholder="Enter your username"
+              placeholder={t("auth.usernamePlaceholder")}
             />
           </div>
 
           <div className="signup-field">
-            <label>Email address</label>
+            <label>{t("auth.emailAddress")}</label>
             <input
               type="email"
               value={form.email}
               onChange={(e) => handleChange("email", e.target.value)}
-              placeholder="Enter your email address"
+              placeholder={t("auth.emailPlaceholder")}
             />
           </div>
 
           <div className="signup-field">
-            <label>Password</label>
+            <label>{t("auth.password")}</label>
             <div className="password-input-wrap">
               <input
                 type={showPassword ? "text" : "password"}
                 value={form.password}
                 onChange={(e) => handleChange("password", e.target.value)}
-                placeholder="Create your password"
+                placeholder={t("auth.createPassword")}
               />
               <button
                 type="button"
                 className="password-eye-btn"
                 onClick={() => setShowPassword((value) => !value)}
-                aria-label="Toggle password visibility"
+                aria-label={t("auth.togglePassword")}
               >
-                {showPassword ? "◉" : "◌"}
+                {showPassword ? t("auth.hidePassword") : t("auth.showPassword")}
               </button>
             </div>
           </div>
 
           <div className="signup-field">
-            <label>Confirm your password</label>
+            <label>{t("auth.confirmPasswordLabel")}</label>
             <div className="password-input-wrap">
               <input
                 type={showConfirmPassword ? "text" : "password"}
                 value={form.confirmPassword}
                 onChange={(e) => handleChange("confirmPassword", e.target.value)}
-                placeholder="Confirm your password"
+                placeholder={t("auth.confirmPassword")}
               />
               <button
                 type="button"
                 className="password-eye-btn"
                 onClick={() => setShowConfirmPassword((value) => !value)}
-                aria-label="Toggle password visibility"
+                aria-label={t("auth.togglePassword")}
               >
-                {showConfirmPassword ? "◉" : "◌"}
+                {showConfirmPassword ? t("auth.hidePassword") : t("auth.showPassword")}
               </button>
             </div>
           </div>
 
           <div className="signup-role-block">
-            <div className="signup-role-label">I want to join as:</div>
-            <div className="signup-role-list" role="radiogroup" aria-label="Choose account role">
+            <div className="signup-role-label">{t("auth.rolePrompt")}</div>
+            <div className="signup-role-list" role="radiogroup" aria-label={t("auth.chooseRole")}>
               {roleOptions.map((role) => (
                 <button
                   key={role.id}
@@ -144,7 +146,7 @@ export default function SignUpModal({
                   aria-checked={form.primaryRole === role.id}
                 >
                   <span className="signup-role-icon">{role.icon}</span>
-                  <span className="signup-role-name">{role.label}</span>
+                  <span className="signup-role-name">{t(role.labelKey)}</span>
                   <span className="signup-role-radio" />
                 </button>
               ))}
@@ -152,14 +154,14 @@ export default function SignUpModal({
           </div>
 
           <button type="submit" className="signup-submit-btn">
-            Sign Up
+            {t("header.signUp")}
           </button>
         </form>
 
         <div className="signup-bottom-link">
-          Already have an account?{" "}
+          {t("auth.alreadyHaveAccount")}{" "}
           <button type="button" className="auth-link-btn" onClick={switchToSignIn}>
-            Log In
+            {t("auth.logIn")}
           </button>
         </div>
       </div>
