@@ -69,8 +69,9 @@ export async function apiRequest(path, options = {}) {
   const method = options.method || "GET";
   const unsafe = isUnsafeMethod(method);
   const baseHeaders = new Headers(options.headers || {});
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
 
-  if (!baseHeaders.has("Content-Type") && options.body) {
+  if (!isFormData && !baseHeaders.has("Content-Type") && options.body) {
     baseHeaders.set("Content-Type", "application/json");
   }
 

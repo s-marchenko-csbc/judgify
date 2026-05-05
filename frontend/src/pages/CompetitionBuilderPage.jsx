@@ -6,10 +6,13 @@ import {
   assignCompetitionJudge,
   createCompetitionDraft,
   createCompetitionInvitations,
+  deleteCompetitionMaterial,
   fetchCompetitionBuilder,
   fetchCompetitionJudges,
+  fetchCompetitionMaterials,
   publishCompetition,
   saveCompetitionBuilder,
+  uploadCompetitionMaterial,
 } from "../api/competitionBuilderApi";
 
 const steps = [
@@ -64,6 +67,7 @@ const defaultDraft = {
   },
   judging_criteria: [{ title: "Quality", description: "", max_score: 10, weight: 1, sort_order: 0 }],
   awards: [{ title: "Winner", place: 1, issue_certificate: true, issue_badge: true, description: "" }],
+  materials: [],
 };
 
 function toDateTimeLocal(value) {
@@ -195,6 +199,7 @@ function preparePayload(draft, step) {
   });
   payload.is_public = payload.visibility_mode === "public";
   payload.show_in_catalog = payload.visibility_mode === "public" && Boolean(payload.show_in_catalog);
+  delete payload.materials;
   return payload;
 }
 
@@ -276,6 +281,10 @@ export default function CompetitionBuilderPage() {
   const [teamInviteText, setTeamInviteText] = useState("");
   const [judgeText, setJudgeText] = useState("");
   const [judges, setJudges] = useState([]);
+  const [materialFile, setMaterialFile] = useState(null);
+  const [materialName, setMaterialName] = useState("");
+  const [materialUrl, setMaterialUrl] = useState("");
+  const [materialType, setMaterialType] = useState("guide");
   const [saving, setSaving] = useState(false);
   const draftCreationStartedRef = useRef(false);
 
@@ -285,9 +294,10 @@ export default function CompetitionBuilderPage() {
       fetchCompetitionBuilder(id).then((data) => {
         setDraft(normalizeDraft(data));
         setStep(data.setup_step || 1);
-        return fetchCompetitionJudges(id);
-      }).then((items) => {
-        if (items) setJudges(items);
+        return Promise.all([fetchCompetitionJudges(id), fetchCompetitionMaterials(id)]);
+      }).then(([judgeItems, materialItems]) => {
+        if (judgeItems) setJudges(judgeItems);
+        if (materialItems) setDraft((prev) => ({ ...prev, materials: materialItems }));
       }).catch((error) => setStatusText(error.message));
     } else {
       if (draftCreationStartedRef.current) return;
@@ -295,8 +305,9 @@ export default function CompetitionBuilderPage() {
       createCompetitionDraft(preparePayload(defaultDraft, 1)).then((data) => {
         setCompetitionId(data.id);
         setDraft(normalizeDraft(data));
-        return fetchCompetitionJudges(data.id).then((items) => {
-          setJudges(items || []);
+        return Promise.all([fetchCompetitionJudges(data.id), fetchCompetitionMaterials(data.id)]).then(([judgeItems, materialItems]) => {
+          setJudges(judgeItems || []);
+          setDraft((prev) => ({ ...prev, materials: materialItems || [] }));
           return data;
         });
       }).then((data) => {
@@ -397,6 +408,42 @@ export default function CompetitionBuilderPage() {
       setStatusText("Jury member assigned");
     } catch (error) {
       setStatusText(error.message || "Jury member was not assigned");
+    }
+  };
+
+  const refreshMaterials = async () => {
+    if (!competitionId) return;
+    const items = await fetchCompetitionMaterials(competitionId);
+    setDraft((prev) => ({ ...prev, materials: items || [] }));
+  };
+
+  const uploadMaterial = async () => {
+    if (!competitionId || (!materialFile && !materialUrl.trim())) return;
+    const formData = new FormData();
+    if (materialFile) formData.append("file", materialFile);
+    if (materialUrl.trim()) formData.append("url", materialUrl.trim());
+    formData.append("name", materialName.trim() || materialFile?.name || materialUrl.trim());
+    formData.append("material_type", materialType);
+    try {
+      const created = await uploadCompetitionMaterial(competitionId, formData);
+      setDraft((prev) => ({ ...prev, materials: [...(prev.materials || []), created] }));
+      setMaterialFile(null);
+      setMaterialName("");
+      setMaterialUrl("");
+      setStatusText("Material uploaded");
+    } catch (error) {
+      setStatusText(error.message || "Material was not uploaded");
+    }
+  };
+
+  const removeMaterial = async (materialId) => {
+    if (!competitionId || !materialId) return;
+    try {
+      await deleteCompetitionMaterial(competitionId, materialId);
+      await refreshMaterials();
+      setStatusText("Material removed");
+    } catch (error) {
+      setStatusText(error.message || "Material was not removed");
     }
   };
 
@@ -528,6 +575,25 @@ export default function CompetitionBuilderPage() {
                   <CheckField label="Repository required" checked={draft.submission_settings.repository_url_required} onChange={(value) => setNested("submission_settings", "repository_url_required", value)} />
                   <CheckField label="Demo required" checked={draft.submission_settings.demo_url_required} onChange={(value) => setNested("submission_settings", "demo_url_required", value)} />
                 </div>
+
+                <h2>Competition materials</h2>
+                <div className="builder-form-grid">
+                  <Field label="Material title"><input value={materialName} onChange={(e) => setMaterialName(e.target.value)} placeholder="Rules, starter kit, dataset" /></Field>
+                  <Field label="Material type"><select value={materialType} onChange={(e) => setMaterialType(e.target.value)}><option value="rules">Rules</option><option value="dataset">Dataset</option><option value="template">Template</option><option value="guide">Guide</option><option value="other">Other</option></select></Field>
+                  <Field label="Upload file"><input type="file" onChange={(e) => setMaterialFile(e.target.files?.[0] || null)} /></Field>
+                  <Field label="External URL"><input value={materialUrl} onChange={(e) => setMaterialUrl(e.target.value)} placeholder="https://..." /></Field>
+                </div>
+                <button type="button" onClick={uploadMaterial}>Add material</button>
+                {(draft.materials || []).length > 0 && (
+                  <div className="builder-inline-card">
+                    {(draft.materials || []).map((material) => (
+                      <span key={material.id}>
+                        <a href={material.url || "#"} target="_blank" rel="noreferrer">{material.name}</a> · {material.material_type}
+                        <button type="button" onClick={() => removeMaterial(material.id)}>Remove</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 <h2>Judging criteria</h2>
                 {draft.judging_criteria.map((criterion, index) => <div className="builder-inline-card" key={index}><input value={criterion.title} onChange={(e) => updateArrayItem("judging_criteria", index, "title", e.target.value)} /><input type="number" value={criterion.max_score} onChange={(e) => updateArrayItem("judging_criteria", index, "max_score", Number(e.target.value))} /><input type="number" step="0.1" value={criterion.weight} onChange={(e) => updateArrayItem("judging_criteria", index, "weight", Number(e.target.value))} /></div>)}

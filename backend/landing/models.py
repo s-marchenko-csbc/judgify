@@ -416,7 +416,14 @@ class CompetitionMaterial(models.Model):
         choices=MATERIAL_TYPE_CHOICES,
         default="other",
     )
-    url = models.URLField()
+    url = models.URLField(blank=True)
+    file = models.ForeignKey(
+        "UserFile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="competition_materials",
+    )
     sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -795,6 +802,7 @@ class UserFile(models.Model):
     original_name = models.CharField(max_length=255)
     mime_type = models.CharField(max_length=128, blank=True)
     size_bytes = models.PositiveBigIntegerField(default=0)
+    content = models.BinaryField(null=True, blank=True)
     checksum = models.CharField(max_length=128, blank=True)
     file_type = models.CharField(max_length=32, choices=FILE_TYPE_CHOICES, default="other")
     visibility = models.CharField(max_length=32, choices=VISIBILITY_CHOICES, default="private")

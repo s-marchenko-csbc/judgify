@@ -46,6 +46,23 @@ export function assignCompetitionJudge(id, payload = {}) {
   });
 }
 
+export function fetchCompetitionMaterials(id) {
+  return apiRequest(`/competition-builder/${id}/materials/`);
+}
+
+export function uploadCompetitionMaterial(id, payload) {
+  return apiRequest(`/competition-builder/${id}/materials/`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function deleteCompetitionMaterial(id, materialId) {
+  return apiRequest(`/competition-builder/${id}/materials/?id=${encodeURIComponent(materialId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function createCompetitionInvitations(id, payload = {}) {
   return apiRequest(`/competition-builder/${id}/invitations/`, {
     method: "POST",

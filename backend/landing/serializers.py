@@ -93,6 +93,7 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
     submission_settings = CompetitionSubmissionSettingsSerializer(required=False)
     judging_criteria = CompetitionJudgingCriterionSerializer(many=True, required=False)
     awards = CompetitionAwardSerializer(many=True, required=False)
+    materials = serializers.SerializerMethodField()
     invitations = CompetitionInvitationSerializer(many=True, read_only=True)
 
     class Meta:
@@ -112,7 +113,7 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
             "starts_at", "ends_at", "judging_starts_at",
             "judging_ends_at", "results_public_at", "timer_deadline",
             "current_round", "total_rounds", "rounds",
-            "submission_settings", "judging_criteria", "awards", "invitations",
+            "submission_settings", "judging_criteria", "awards", "materials", "invitations",
             "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -182,6 +183,9 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(errors)
         return attrs
 
+    def get_materials(self, obj):
+        return CompetitionMaterialSerializer(obj.materials.all(), many=True, context=self.context).data
+
     def create(self, validated_data):
         nested = self._pop_nested(validated_data)
         competition = Competition.objects.create(**validated_data)
@@ -242,6 +246,12 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
 
 
 class CompetitionMaterialSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+    file_id = serializers.IntegerField(read_only=True)
+    original_name = serializers.CharField(source="file.original_name", read_only=True)
+    mime_type = serializers.CharField(source="file.mime_type", read_only=True)
+    size_bytes = serializers.IntegerField(source="file.size_bytes", read_only=True)
+
     class Meta:
         model = CompetitionMaterial
         fields = [
@@ -250,9 +260,20 @@ class CompetitionMaterialSerializer(serializers.ModelSerializer):
             "name",
             "material_type",
             "url",
+            "file_id",
+            "original_name",
+            "mime_type",
+            "size_bytes",
             "sort_order",
             "created_at",
         ]
+
+    def get_url(self, obj):
+        if obj.file_id:
+            request = self.context.get("request")
+            path = f"/api/files/{obj.file_id}/download/"
+            return request.build_absolute_uri(path) if request else path
+        return obj.url or ""
 
 
 

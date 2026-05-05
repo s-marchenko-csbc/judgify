@@ -1,15 +1,20 @@
 from datetime import timedelta
+import hashlib
+import secrets
+import uuid
 
+from django.conf import settings
 from django.contrib.auth import get_user_model, login, logout
 from django.db.models import Q, F, ExpressionWrapper, FloatField
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
 from django.utils import timezone
-import secrets
 
 from rest_framework import status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -29,6 +34,7 @@ from .models import (
     CompetitionLeaderboardEntry,
     CompetitionJudgingMetric,
     UserProfile,
+    UserFile,
     RecentlyViewedCompetition,
     RecentlyViewedMaterial,
     CompetitionMaterial,
@@ -1156,6 +1162,66 @@ def ensure_organizer_membership(user, competition):
     )
 
 
+def normalize_upload_name(name):
+    cleaned = (name or "upload").replace("\\", "/").split("/")[-1].strip()
+    return cleaned or "upload"
+
+
+def create_uploaded_user_file(owner, uploaded_file, file_type="resource", visibility="private"):
+    original_name = normalize_upload_name(getattr(uploaded_file, "name", "upload"))
+    content = uploaded_file.read()
+    size_bytes = len(content)
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    if size_bytes > max_bytes:
+        raise ValueError(f"File is too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB} MB.")
+
+    return UserFile.objects.create(
+        owner=owner,
+        storage_key=f"uploads/{owner.id}/{uuid.uuid4().hex}-{original_name}",
+        original_name=original_name,
+        mime_type=getattr(uploaded_file, "content_type", "") or "",
+        size_bytes=size_bytes,
+        content=content,
+        checksum=hashlib.sha256(content).hexdigest(),
+        file_type=file_type,
+        visibility=visibility,
+    )
+
+
+def user_can_access_file(user, user_file):
+    if user_file.visibility == "public":
+        return True
+
+    material_links = CompetitionMaterial.objects.filter(file=user_file).select_related("competition")
+    if material_links.filter(competition__is_public=True).exists():
+        return True
+
+    if not user.is_authenticated:
+        return False
+    if user_file.owner_id == user.id or user_is_admin(user):
+        return True
+    return material_links.filter(competition__participant_entries__user=user).exists()
+
+
+class UserFileDownloadView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        user_file = get_object_or_404(UserFile, pk=pk)
+        if not user_can_access_file(request.user, user_file):
+            return Response({"detail": "You cannot access this file."}, status=status.HTTP_403_FORBIDDEN)
+        if user_file.content is None:
+            return Response({"detail": "File content is not available."}, status=status.HTTP_404_NOT_FOUND)
+
+        content_type = user_file.mime_type or "application/octet-stream"
+        response = HttpResponse(bytes(user_file.content), content_type=content_type)
+        filename = normalize_upload_name(user_file.original_name).replace('"', "")
+        disposition = "inline" if content_type.startswith("image/") else "attachment"
+        response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+        response["Content-Length"] = str(user_file.size_bytes)
+        return response
+
+
 class CompetitionDraftListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1399,6 +1465,70 @@ class CompetitionJudgeAssignmentView(APIView):
             },
         )
         return Response(CompetitionParticipantSerializer(participant).data, status=status.HTTP_201_CREATED)
+
+
+class CompetitionMaterialUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot view materials for this competition."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(CompetitionMaterialSerializer(competition.materials.all(), many=True, context={"request": request}).data)
+
+    def post(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot upload materials for this competition."}, status=status.HTTP_403_FORBIDDEN)
+
+        uploaded_file = request.FILES.get("file")
+        material_url = (request.data.get("url") or "").strip()
+        if not uploaded_file and not material_url:
+            return Response({"detail": "File or URL is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        name = (request.data.get("name") or "").strip()
+        material_type = (request.data.get("material_type") or request.data.get("materialType") or "other").strip()
+        valid_types = {choice[0] for choice in CompetitionMaterial.MATERIAL_TYPE_CHOICES}
+        if material_type not in valid_types:
+            material_type = "other"
+
+        sort_order = request.data.get("sort_order") or request.data.get("sortOrder") or competition.materials.count()
+        sort_order = int(sort_order) if str(sort_order).isdigit() else competition.materials.count()
+
+        user_file = None
+        if uploaded_file:
+            try:
+                user_file = create_uploaded_user_file(
+                    request.user,
+                    uploaded_file,
+                    file_type="competition_attachment",
+                    visibility="competition_only",
+                )
+            except ValueError as error:
+                return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+
+        material = CompetitionMaterial.objects.create(
+            competition=competition,
+            name=name or (user_file.original_name if user_file else material_url),
+            material_type=material_type,
+            url="" if user_file else material_url,
+            file=user_file,
+            sort_order=sort_order,
+        )
+        return Response(CompetitionMaterialSerializer(material, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot delete materials for this competition."}, status=status.HTTP_403_FORBIDDEN)
+        material_id = request.data.get("id") or request.query_params.get("id")
+        material = get_object_or_404(CompetitionMaterial, pk=material_id, competition=competition)
+        linked_file = material.file
+        material.delete()
+        if linked_file and not linked_file.competition_materials.exists():
+            linked_file.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class CompetitionInvitationView(APIView):

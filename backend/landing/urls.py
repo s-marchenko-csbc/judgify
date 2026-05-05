@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     CsrfView,
     HealthCheckView,
+    UserFileDownloadView,
     CurrentUserView,
     DevLoginView,
     LogoutView,
@@ -28,6 +29,7 @@ from .views import (
     CompetitionPublishView,
     CompetitionOrganizerApprovalView,
     CompetitionJudgeAssignmentView,
+    CompetitionMaterialUploadView,
     CompetitionInvitationView,
     CompetitionOutboundMessagesView,
 )
@@ -39,6 +41,7 @@ urlpatterns = [
     path("auth/me/", CurrentUserView.as_view(), name="auth-me"),
     path("auth/dev-login/", DevLoginView.as_view(), name="auth-dev-login"),
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
+    path("files/<int:pk>/download/", UserFileDownloadView.as_view(), name="file-download"),
 
     # landing
     path("landing/competitions/", LandingCompetitionsView.as_view(), name="landing-competitions"),
@@ -59,6 +62,7 @@ urlpatterns = [
     path("competition-builder/<int:pk>/publish/", CompetitionPublishView.as_view(), name="competition-builder-publish"),
     path("competition-builder/<int:pk>/approval/", CompetitionOrganizerApprovalView.as_view(), name="competition-builder-approval"),
     path("competition-builder/<int:pk>/judges/", CompetitionJudgeAssignmentView.as_view(), name="competition-builder-judges"),
+    path("competition-builder/<int:pk>/materials/", CompetitionMaterialUploadView.as_view(), name="competition-builder-materials"),
     path("competition-builder/<int:pk>/invitations/", CompetitionInvitationView.as_view(), name="competition-builder-invitations"),
     path("competition-builder/<int:pk>/messages/", CompetitionOutboundMessagesView.as_view(), name="competition-builder-messages"),
 
