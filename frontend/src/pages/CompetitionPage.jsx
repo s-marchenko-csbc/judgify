@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useLocation, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import Header from "../components/Header";
 import CompetitionHeader from "../components/competition/CompetitionHeader";
@@ -7,8 +7,9 @@ import CompetitionSidebar from "../components/competition/CompetitionSidebar";
 import CompetitionTabs from "../components/competition/CompetitionTabs";
 import CompetitionTabContent from "../components/competition/CompetitionTabContent";
 import JoinCompetitionModal from "../components/competition/JoinCompetitionModal";
+import { useAuth } from "../context/AuthContext";
 
-import { fetchCompetitions } from "../api/landingApi";
+import { fetchCompetitionDetail, fetchCompetitions, fetchCompetitionParticipants, fetchCompetitionResults, fetchCompetitionJudging } from "../api/landingApi";
 
 function capitalize(value) {
   if (!value) return "";
@@ -17,13 +18,12 @@ function capitalize(value) {
 }
 
 function formatDateRange(baseCompetition) {
-  if (!baseCompetition?.timer_deadline) {
-    return "May 9, 2027 – May 20, 2027";
-  }
+  const startDate = baseCompetition?.starts_at ? new Date(baseCompetition.starts_at) : null;
+  const endDate = baseCompetition?.ends_at ? new Date(baseCompetition.ends_at) : null;
 
-  const endDate = new Date(baseCompetition.timer_deadline);
-  const startDate = new Date(endDate);
-  startDate.setDate(startDate.getDate() - 11);
+  if (!startDate || !endDate || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return "Schedule is being finalized";
+  }
 
   const format = (date) =>
     date.toLocaleDateString("en-US", {
@@ -37,7 +37,7 @@ function formatDateRange(baseCompetition) {
 
 function formatUpcomingCountdown(timerDeadline) {
   if (!timerDeadline) {
-    return "02:14:11";
+    return "timer is not available";
   }
 
   const diff = new Date(timerDeadline).getTime() - Date.now();
@@ -51,81 +51,43 @@ function formatUpcomingCountdown(timerDeadline) {
   return `${hours}:${minutes}:${seconds}`;
 }
 
-function buildMockCompetition(baseCompetition) {
-  const currentRound = baseCompetition?.current_round || 1;
-  const totalRounds = baseCompetition?.total_rounds || 6;
+function enrichCompetition(baseCompetition) {
+  const currentRound = baseCompetition?.current_round || 0;
+  const totalRounds = baseCompetition?.total_rounds || 0;
+  const nextRound = totalRounds ? Math.min(currentRound + 1, totalRounds) : 0;
 
   return {
     ...baseCompetition,
-    organizerCode: `Ereed-${500 + Number(baseCompetition?.id || 15)}`,
-    category: capitalize(baseCompetition?.industry) || "Programming",
-    difficulty: capitalize(baseCompetition?.difficulty) || "Beginner",
+    organizerCode: baseCompetition?.slug || `competition-${baseCompetition?.id || ""}`,
+    category: capitalize(baseCompetition?.industry) || "Competition",
+    difficulty: capitalize(baseCompetition?.difficulty) || "Mixed",
     datesLabel: formatDateRange(baseCompetition),
-    sidebarDescription:
-      baseCompetition?.short_description ||
-      "A programming competition focused on creating AI models to solve specified challenges in an online environment.",
-    upcomingText: `Round ${Math.min(
-      currentRound + 1,
-      totalRounds
-    )} begins in: ${formatUpcomingCountdown(
-      baseCompetition?.timer_deadline
-    )} on May 11, Altcom, in fifteen seconds.`,
-    materials: [
-      { id: 1, name: "Starter Dataset", icon: "⚓", url: "#" },
-      { id: 2, name: "Sample AI Model Code", icon: "🧬", url: "#" },
-    ],
-    announcements: [
-      {
-        id: 1,
-        author: "Round 1: Kickoff!",
-        avatar:
-          "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&q=80&auto=format&fit=crop",
-        postedAgo: "1 day ago",
-        text: "Participants, competitions have started! You are piloting 3 tasks in 3 hours, resources and downloads for you below.",
-        comments: [],
-      },
-    ],
-    participants: [
-      { id: 1, name: "Alice Johnson", role: "Participant", isActiveNow: true },
-      { id: 2, name: "Neo Coders", role: "Team", isActiveNow: false },
-      { id: 3, name: "Victor Lane", role: "Participant", isActiveNow: true },
-      { id: 4, name: "Data Falcons", role: "Team", isActiveNow: true },
-      { id: 5, name: "Marta Silva", role: "Observer", isActiveNow: false },
-      { id: 6, name: "Core Matrix", role: "Team", isActiveNow: false },
-    ],
-    results: {
-      roundHistory: [
-        { round: 1, leader: "Neo Coders", topScore: 91.4 },
-        { round: 2, leader: "Data Falcons", topScore: 93.8 },
-        { round: 3, leader: "Victor Lane", topScore: 95.1 },
-      ],
-      leaderboard: [
-        { rank: 1, name: "Victor Lane", score: 95.1 },
-        { rank: 2, name: "Data Falcons", score: 93.8 },
-        { rank: 3, name: "Neo Coders", score: 91.4 },
-        { rank: 4, name: "Alice Johnson", score: 88.7 },
-      ],
-    },
-    judging: {
-      mode: "individual",
-      metrics: [
-        { label: "Accuracy", value: 91 },
-        { label: "Speed", value: 83 },
-        { label: "Innovation", value: 88 },
-        { label: "Penalty", value: 4 },
-      ],
-    },
+    sidebarDescription: baseCompetition?.short_description || "Competition details are being prepared by the organizer.",
+    upcomingText: nextRound
+      ? `Round ${nextRound} timer: ${formatUpcomingCountdown(baseCompetition?.timer_deadline)}`
+      : `Timer: ${formatUpcomingCountdown(baseCompetition?.timer_deadline)}`,
+    materials: (baseCompetition?.materials || []).map((material) => ({
+      ...material,
+      icon: material.icon || "📎",
+    })),
+    announcements: baseCompetition?.announcements || [],
+    participants: baseCompetition?.participants || [],
+    results: baseCompetition?.results || { roundHistory: [], leaderboard: [] },
+    judging: baseCompetition?.judging || { mode: "not configured", metrics: [] },
   };
 }
 
 export default function CompetitionPage() {
   const { id } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  const { user } = useAuth();
 
   const [competition, setCompetition] = useState(
     location.state?.competition
-      ? buildMockCompetition(location.state.competition)
+      ? enrichCompetition(location.state.competition)
       : null
   );
   const [loading, setLoading] = useState(!location.state?.competition);
@@ -137,6 +99,10 @@ export default function CompetitionPage() {
   const [activeTab, setActiveTab] = useState(
     searchParams.get("tab") || "overview"
   );
+
+  const canCurrentUserJoin =
+    user?.primaryRole === "participant" &&
+    competition?.can_join !== false;
 
   useEffect(() => {
     const tabFromUrl = searchParams.get("tab");
@@ -150,41 +116,63 @@ export default function CompetitionPage() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (location.state?.competition) return;
-
     let isMounted = true;
 
-    async function loadCompetitionFallback() {
+    async function loadCompetition({ showLoader = false } = {}) {
       try {
-        setLoading(true);
+        if (showLoader) setLoading(!location.state?.competition);
         setError("");
 
-        const list = await fetchCompetitions({ tab: "trending" });
-        const found = list.find((item) => String(item.id) === String(id));
-
-        if (!found) {
-          throw new Error("Competition not found");
-        }
-
+        const detail = await fetchCompetitionDetail(id);
+        const participants = await fetchCompetitionParticipants(id);
+        const [resultsResponse, judgingResponse] = await Promise.allSettled([
+          fetchCompetitionResults(id),
+          fetchCompetitionJudging(id),
+        ]);
+        const resultsData = resultsResponse.status === "fulfilled" ? resultsResponse.value : {};
+        const results = {
+          roundHistory: (resultsData.round_history || []).map((item) => ({
+            round: item.round_number ?? item.round,
+            leader: item.leader_name ?? item.leader,
+            topScore: item.top_score ?? item.topScore,
+          })),
+          leaderboard: (resultsData.leaderboard || []).map((item) => ({
+            rank: item.rank,
+            name: item.name,
+            score: item.score,
+          })),
+        };
+        const judging = judgingResponse.status === "fulfilled" ? judgingResponse.value : { mode: "not configured", metrics: [] };
         if (isMounted) {
-          setCompetition(buildMockCompetition(found));
+          setCompetition(enrichCompetition({ ...detail, participants, results, judging }));
         }
       } catch (err) {
         console.error(err);
-        if (isMounted) {
-          setError("Не вдалося завантажити сторінку змагання.");
+        if (location.state?.competition) {
+          if (showLoader) setLoading(false);
+          return;
+        }
+        try {
+          const list = await fetchCompetitions({ tab: "trending" });
+          const found = list.find((item) => String(item.id) === String(id));
+          if (!found) throw new Error("Competition not found");
+          const participants = await fetchCompetitionParticipants(id).catch(() => []);
+          if (isMounted) setCompetition(enrichCompetition({ ...found, participants }));
+        } catch (fallbackError) {
+          console.error(fallbackError);
+          if (isMounted) setError("Не вдалося завантажити сторінку змагання.");
         }
       } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+        if (showLoader && isMounted) setLoading(false);
       }
     }
 
-    loadCompetitionFallback();
+    loadCompetition({ showLoader: true });
+    const intervalId = window.setInterval(() => loadCompetition({ showLoader: false }), 5000);
 
     return () => {
       isMounted = false;
+      window.clearInterval(intervalId);
     };
   }, [id, location.state]);
 
@@ -207,6 +195,20 @@ export default function CompetitionPage() {
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete("join");
     setSearchParams(nextParams);
+  };
+
+  const handleJoinSubmitted = async (result) => {
+    const participants = await fetchCompetitionParticipants(id).catch(() => competition?.participants || []);
+    setCompetition((prev) => ({
+      ...prev,
+      participants,
+      participants_count: participants.filter((item) => item.status === "approved").length,
+      user_participation_status: result?.status || "pending",
+      user_participation_role: result?.role || "participant",
+      user_team: result?.team ? result.team : result?.team_name ? { name: result.team_name, status: "pending" } : prev?.user_team,
+      can_join: false,
+    }));
+    closeJoinModal();
   };
 
   const handleCommentPost = () => {
@@ -253,7 +255,7 @@ export default function CompetitionPage() {
   }
 
   return (
-    <div className="landing-page">
+    <div className="landing-page competition-detail-page">
       <Header />
 
       <div className="competition-page-shell">
@@ -264,6 +266,7 @@ export default function CompetitionPage() {
                 competition={competition}
                 pageTitle={pageTitle}
                 onJoin={openJoinModal}
+                onEdit={() => navigate(`/competitions/${competition.id}/edit`)}
               />
 
               <CompetitionTabs
@@ -287,10 +290,11 @@ export default function CompetitionPage() {
         </div>
       </div>
 
-      {showJoinModal && (
+      {showJoinModal && canCurrentUserJoin && (
         <JoinCompetitionModal
           competition={competition}
           onClose={closeJoinModal}
+          onSubmitted={handleJoinSubmitted}
         />
       )}
     </div>

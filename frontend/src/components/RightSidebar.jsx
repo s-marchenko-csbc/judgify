@@ -1,4 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
+import { Link } from "react-router-dom";
+import { toggleSavedCompetition } from "../api/savedApi";
 
 function getStatusLabel(status) {
   const map = {
@@ -26,76 +28,167 @@ function getStatusClass(status) {
   return map[status] || "status-default";
 }
 
-function BannerItem({ item }) {
+function HeartIcon() {
   return (
-    <div className="last-competition-banner">
-      <div
-        className="last-competition-banner-cover"
-        style={
-          item.cover_image
-            ? { backgroundImage: `url(${item.cover_image})` }
-            : undefined
-        }
-      />
-      <div className="last-competition-banner-content">
-        <div className="last-competition-banner-name">{item.name}</div>
-        <div className="last-competition-banner-meta">
-          <span>👤 {item.participants_count}</span>
-          <span>💬 {item.comments_count}</span>
-          <span className={getStatusClass(item.status)}>
-            {getStatusLabel(item.status)}
-          </span>
-        </div>
-      </div>
-    </div>
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      aria-hidden="true"
+      className="card-heart-icon filled"
+    >
+      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+    </svg>
   );
 }
 
-function SavedCard({ item }) {
+function CompetitionRecentItem({ item }) {
+  return (
+    <Link className="recent-item recent-item-link" to={`/competitions/${item.id}`}>
+      <div
+        className="recent-item-cover"
+        style={item.cover_image ? { backgroundImage: `url(${item.cover_image})` } : undefined}
+      />
+      <div className="recent-item-content">
+        <div className="recent-item-name">{item.name}</div>
+        <div className="recent-item-meta">
+          <span>👤 {item.participants_count}</span>
+          <span>💬 {item.comments_count}</span>
+          {item.language && <span>{String(item.language).toUpperCase()}</span>}
+          <span className={getStatusClass(item.status)}>{getStatusLabel(item.status)}</span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function MaterialRecentItem({ record }) {
+  const material = record.material || {};
+  return (
+    <a className="recent-item recent-material-item" href={material.url || "#"} target="_blank" rel="noreferrer">
+      <div className="recent-material-icon">📎</div>
+      <div className="recent-item-content">
+        <div className="recent-item-name">{material.name}</div>
+        <div className="recent-item-meta">
+          <span>{record.competition_name}</span>
+          <span>{material.material_type}</span>
+        </div>
+      </div>
+    </a>
+  );
+}
+
+function SavedCard({ item, onSavedChange }) {
+  const [saving, setSaving] = useState(false);
+
+  const handleRemove = async () => {
+    if (saving) return;
+    setSaving(true);
+
+    try {
+      await toggleSavedCompetition(item.id, false);
+      onSavedChange?.(item.id, false, item);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="sidebar-card">
-      <div
+      <Link
+        to={`/competitions/${item.id}`}
         className="sidebar-card-cover"
-        style={
-          item.cover_image
-            ? { backgroundImage: `url(${item.cover_image})` }
-            : undefined
-        }
+        style={item.cover_image ? { backgroundImage: `url(${item.cover_image})` } : undefined}
+        aria-label={`Open ${item.name}`}
       />
       <div className="sidebar-card-info">
-        <div className="sidebar-card-name">{item.name}</div>
+        <div className="sidebar-card-name-row">
+          <Link to={`/competitions/${item.id}`} className="sidebar-card-name">{item.name}</Link>
+          <button
+            type="button"
+            className="sidebar-heart-btn saved"
+            onClick={handleRemove}
+            aria-label="Remove from saved"
+            title="Remove from saved"
+            disabled={saving}
+          >
+            <HeartIcon />
+          </button>
+        </div>
         <div className="sidebar-card-meta">
           <span>👤 {item.participants_count}</span>
           <span>💬 {item.comments_count}</span>
-          <span className={getStatusClass(item.status)}>
-            {getStatusLabel(item.status)}
-          </span>
+          {item.language && <span>{String(item.language).toUpperCase()}</span>}
+          <span className={getStatusClass(item.status)}>{getStatusLabel(item.status)}</span>
         </div>
       </div>
     </div>
   );
 }
 
-export default function RightSidebar({ data }) {
+function uniqueById(items = []) {
+  const seen = new Set();
+  return items.filter((item) => {
+    if (!item?.id || seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+function uniqueMaterialRecords(records = []) {
+  const seen = new Set();
+  return records.filter((record) => {
+    const key = record?.material?.id || record?.id;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export default function RightSidebar({ data, onSavedChange }) {
   if (!data) return null;
+
+  const recentlyViewed = uniqueById(data.recently_viewed || data.last_competitions || []);
+  const recentMaterials = uniqueMaterialRecords(data.recent_materials || []);
 
   return (
     <aside className="right-sidebar">
       <section className="right-panel-block">
-        <h3>Last Competitions</h3>
+        <h3>Recently Viewed</h3>
         <div className="last-competitions-list">
-          {data.last_competitions.map((item) => (
-            <BannerItem key={item.id} item={item} />
-          ))}
+          {recentlyViewed.length === 0 && recentMaterials.length === 0 ? (
+            <div className="sidebar-empty">No recently viewed items yet.</div>
+          ) : (
+            <>
+              {recentlyViewed.length > 0 && (
+                <>
+                  <div className="recent-section-title">Competitions</div>
+                  {recentlyViewed.map((item) => <CompetitionRecentItem key={`competition-${item.id}`} item={item} />)}
+                </>
+              )}
+              {recentMaterials.length > 0 && (
+                <>
+                  <div className="recent-section-title">Materials</div>
+                  {recentMaterials.map((record) => <MaterialRecentItem key={`material-${record.material?.id || record.id}`} record={record} />)}
+                </>
+              )}
+            </>
+          )}
         </div>
       </section>
 
       <section className="right-panel-block">
         <h3>Saved</h3>
         <div className="sidebar-list">
-          {data.saved_competitions.map((item) => (
-            <SavedCard key={item.id} item={item} />
-          ))}
+          {(data.saved_competitions || []).length === 0 ? (
+            <div className="sidebar-empty">No saved competitions yet.</div>
+          ) : (
+            (data.saved_competitions || []).map((item) => (
+              <SavedCard key={item.id} item={item} onSavedChange={onSavedChange} />
+            ))
+          )}
         </div>
       </section>
     </aside>

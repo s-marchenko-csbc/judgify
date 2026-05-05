@@ -1,8 +1,13 @@
 __pycache__/
 *.pyc
 .venv/
+.python-packages/
+.pip-cache/
+.tmp/
 node_modules/
 dist/
+.npm-cache/
+staticfiles/
 .env
 .DS_Store
 postgres_data/

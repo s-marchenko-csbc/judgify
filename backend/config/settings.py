@@ -1,18 +1,15 @@
 from pathlib import Path
 import os
-
 import dj_database_url
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-
 load_dotenv(BASE_DIR / '.env')
 if os.getenv('RENDER') != 'true':
     load_dotenv(BASE_DIR / '.env.docker')
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key')
 DEBUG = os.getenv('DEBUG', '1') == '1'
-
 ALLOWED_HOSTS = [
     h.strip()
     for h in os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
@@ -106,7 +103,6 @@ STORAGES = {
         'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
     },
 }
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOWED_ORIGINS = [

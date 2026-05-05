@@ -1,6 +1,11 @@
 from django.urls import path
 
 from .views import (
+    CsrfView,
+    HealthCheckView,
+    CurrentUserView,
+    DevLoginView,
+    LogoutView,
     LandingCompetitionsView,
     LandingSidebarView,
     LandingFiltersView,
@@ -8,15 +13,31 @@ from .views import (
     ToggleSavedCompetitionView,
     MySavedCompetitionsView,
     ToggleCompetitionWatchView,
+    MarkMaterialViewedView,
     CompetitionAnnouncementsView,
     AddAnnouncementCommentView,
     CompetitionParticipantsView,
     JoinCompetitionView,
+    CompetitionJoinRequestReviewView,
+    TeamManagementView,
     CompetitionResultsView,
     CompetitionJudgingView,
+    ProfileDashboardView,
+    CompetitionDraftListCreateView,
+    CompetitionBuilderDetailView,
+    CompetitionPublishView,
+    CompetitionInvitationView,
+    CompetitionOutboundMessagesView,
 )
 
 urlpatterns = [
+    path("health/", HealthCheckView.as_view(), name="api-health"),
+    # auth/session
+    path("auth/csrf/", CsrfView.as_view(), name="auth-csrf"),
+    path("auth/me/", CurrentUserView.as_view(), name="auth-me"),
+    path("auth/dev-login/", DevLoginView.as_view(), name="auth-dev-login"),
+    path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
+
     # landing
     path("landing/competitions/", LandingCompetitionsView.as_view(), name="landing-competitions"),
     path("landing/sidebar/", LandingSidebarView.as_view(), name="landing-sidebar"),
@@ -28,9 +49,18 @@ urlpatterns = [
     # saved
     path("competitions/<int:pk>/save/", ToggleSavedCompetitionView.as_view(), name="competition-save"),
     path("me/saved/", MySavedCompetitionsView.as_view(), name="my-saved-competitions"),
+    path("me/profile-dashboard/", ProfileDashboardView.as_view(), name="profile-dashboard"),
+
+    # competition constructor / drafts
+    path("me/competition-drafts/", CompetitionDraftListCreateView.as_view(), name="competition-drafts"),
+    path("competition-builder/<int:pk>/", CompetitionBuilderDetailView.as_view(), name="competition-builder-detail"),
+    path("competition-builder/<int:pk>/publish/", CompetitionPublishView.as_view(), name="competition-builder-publish"),
+    path("competition-builder/<int:pk>/invitations/", CompetitionInvitationView.as_view(), name="competition-builder-invitations"),
+    path("competition-builder/<int:pk>/messages/", CompetitionOutboundMessagesView.as_view(), name="competition-builder-messages"),
 
     # watch
     path("competitions/<int:pk>/watch/", ToggleCompetitionWatchView.as_view(), name="competition-watch"),
+    path("materials/<int:pk>/view/", MarkMaterialViewedView.as_view(), name="material-view"),
 
     # overview
     path("competitions/<int:pk>/announcements/", CompetitionAnnouncementsView.as_view(), name="competition-announcements"),
@@ -39,6 +69,8 @@ urlpatterns = [
     # participants / join
     path("competitions/<int:pk>/participants/", CompetitionParticipantsView.as_view(), name="competition-participants"),
     path("competitions/<int:pk>/join/", JoinCompetitionView.as_view(), name="competition-join"),
+    path("competition-join-requests/<int:pk>/review/", CompetitionJoinRequestReviewView.as_view(), name="competition-join-request-review"),
+    path("me/teams/<int:pk>/", TeamManagementView.as_view(), name="my-team-management"),
 
     # results / judging
     path("competitions/<int:pk>/results/", CompetitionResultsView.as_view(), name="competition-results"),

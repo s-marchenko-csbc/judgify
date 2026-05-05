@@ -1,0 +1,44 @@
+import { apiRequest } from "./client";
+
+export function fetchCompetitionDrafts() {
+  return apiRequest("/me/competition-drafts/");
+}
+
+export function createCompetitionDraft(payload = {}) {
+  return apiRequest("/me/competition-drafts/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchCompetitionBuilder(id) {
+  return apiRequest(`/competition-builder/${id}/`);
+}
+
+export function saveCompetitionBuilder(id, payload = {}) {
+  return apiRequest(`/competition-builder/${id}/`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function publishCompetition(id) {
+  return apiRequest(`/competition-builder/${id}/publish/`, {
+    method: "POST",
+  });
+}
+
+export function createCompetitionInvitations(id, payload = {}) {
+  return apiRequest(`/competition-builder/${id}/invitations/`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchCompetitionInvitations(id) {
+  return apiRequest(`/competition-builder/${id}/invitations/`);
+}
+
+export function fetchCompetitionMessages(id) {
+  return apiRequest(`/competition-builder/${id}/messages/`);
+}

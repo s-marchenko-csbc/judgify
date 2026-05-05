@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { toggleCompetitionSaved } from "../api/landingApi";
+import { toggleSavedCompetition } from "../api/savedApi";
 
 function getStatusLabel(status) {
   const map = {
@@ -47,6 +47,51 @@ function formatRemaining(ms) {
     .join(":");
 }
 
+
+function deriveRoundState(item, now) {
+  const rounds = Array.isArray(item.rounds) ? item.rounds : [];
+  if (!rounds.length) {
+    return {
+      currentRound: item.current_round || 0,
+      totalRounds: item.total_rounds || 1,
+      deadline: item.timer_deadline || null,
+      status: item.status,
+    };
+  }
+
+  const sortedRounds = [...rounds].sort((a, b) => {
+    const orderA = Number.isFinite(Number(a.sort_order)) ? Number(a.sort_order) : 0;
+    const orderB = Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : 0;
+    return orderA - orderB;
+  });
+
+  let completed = 0;
+  let activeIndex = 0;
+  let nextDeadline = item.timer_deadline || null;
+
+  sortedRounds.forEach((round, index) => {
+    const start = round.starts_at ? new Date(round.starts_at).getTime() : null;
+    const end = round.ends_at ? new Date(round.ends_at).getTime() : null;
+    if (end && now > end) completed = index + 1;
+    if (!activeIndex && start && end && now >= start && now <= end && completed === index) {
+      activeIndex = index + 1;
+      nextDeadline = round.ends_at;
+    }
+  });
+
+  if (!activeIndex && item.status === "active") {
+    activeIndex = Math.min(sortedRounds.length, completed + 1);
+    nextDeadline = sortedRounds[activeIndex - 1]?.starts_at || sortedRounds[activeIndex - 1]?.ends_at || item.timer_deadline || null;
+  }
+
+  return {
+    currentRound: activeIndex || item.current_round || 0,
+    totalRounds: sortedRounds.length || item.total_rounds || 1,
+    deadline: nextDeadline,
+    status: item.status,
+  };
+}
+
 function HeartIcon({ filled = false }) {
   return (
     <svg
@@ -77,17 +122,22 @@ export default function CompetitionCard({ item, onSavedChange }) {
     setSaved(Boolean(item.is_saved));
   }, [item.is_saved]);
 
+  const roundState = useMemo(() => deriveRoundState(item, now), [item, now]);
+
   const remainingMs = useMemo(() => {
-    if (!item.timer_deadline) return null;
-    return new Date(item.timer_deadline).getTime() - now;
-  }, [item.timer_deadline, now]);
+    if (!roundState.deadline) return null;
+    return new Date(roundState.deadline).getTime() - now;
+  }, [roundState.deadline, now]);
 
   const isTimerExpired = remainingMs !== null && remainingMs <= 0;
 
   const uiStatus =
-    item.status === "active" && isTimerExpired
+    roundState.status === "active" && isTimerExpired
       ? "finished"
-      : item.status;
+      : roundState.status;
+
+  const hasUserParticipation = ["approved", "pending"].includes(item.user_participation_status);
+  const participationHint = item.user_participation_status === "pending" ? "Pending review" : "";
 
   const isDanger =
     remainingMs !== null &&
@@ -114,14 +164,15 @@ export default function CompetitionCard({ item, onSavedChange }) {
     setSaved(nextSaved);
     setSaving(true);
 
-    if (onSavedChange) {
-      onSavedChange(item.id, nextSaved);
-    }
-
     try {
-      await toggleCompetitionSaved(item.id, nextSaved);
+      await toggleSavedCompetition(item.id, nextSaved);
+
+      if (onSavedChange) {
+        onSavedChange(item.id, nextSaved, item);
+      }
     } catch (error) {
-      console.warn("Saved state was updated locally, but backend sync failed.", error);
+      console.error(error);
+      setSaved(!nextSaved);
     } finally {
       setSaving(false);
     }
@@ -129,7 +180,7 @@ export default function CompetitionCard({ item, onSavedChange }) {
 
   return (
     <div
-      className="competition-card competition-card--interactive"
+      className={`competition-card competition-card--interactive ${hasUserParticipation ? "competition-card--user-participation" : ""}`}
       onClick={openCompetition}
       role="button"
       tabIndex={0}
@@ -169,13 +220,18 @@ export default function CompetitionCard({ item, onSavedChange }) {
       <div className="card-body">
         <div className="card-name-row">
           <div className="card-name">{item.name}</div>
-          {item.industry && (
-            <span className="card-industry-tag">{item.industry}</span>
-          )}
+          <div className="card-tags-inline">
+            {item.industry && (
+              <span className="card-industry-tag">{item.industry}</span>
+            )}
+            {item.language && (
+              <span className="card-industry-tag">{String(item.language).toUpperCase()}</span>
+            )}
+          </div>
         </div>
 
         <div className="card-round">
-          Round: {item.current_round}/{item.total_rounds}
+          Round: {roundState.currentRound}/{roundState.totalRounds}
         </div>
 
         {item.short_description && (
@@ -188,6 +244,7 @@ export default function CompetitionCard({ item, onSavedChange }) {
         <span className={getStatusClass(uiStatus)}>
           {getStatusLabel(uiStatus)}
         </span>
+        {participationHint && <span className="card-participation-hint">{participationHint}</span>}
       </div>
     </div>
   );

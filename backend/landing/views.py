@@ -1,5 +1,12 @@
-from django.db.models import Q
+from datetime import timedelta
+
+from django.contrib.auth import get_user_model, login, logout
+from django.db.models import Q, F, ExpressionWrapper, FloatField
 from django.shortcuts import get_object_or_404
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.utils.decorators import method_decorator
+from django.utils import timezone
+import secrets
 
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -12,11 +19,21 @@ from .models import (
     UserCompetitionWatch,
     CompetitionAnnouncement,
     CompetitionAnnouncementComment,
+    CompetitionTeam,
     CompetitionParticipant,
     CompetitionJoinRequest,
+    CompetitionInvitation,
+    OutboundMessage,
     CompetitionRoundResult,
     CompetitionLeaderboardEntry,
     CompetitionJudgingMetric,
+    UserProfile,
+    RecentlyViewedCompetition,
+    RecentlyViewedMaterial,
+    CompetitionMaterial,
+    UserBadge,
+    Certificate,
+    UserMaterial,
 )
 from .serializers import (
     CompetitionCardSerializer,
@@ -24,68 +41,315 @@ from .serializers import (
     SidebarCompetitionSerializer,
     CompetitionAnnouncementSerializer,
     CompetitionAnnouncementCommentSerializer,
+    CompetitionTeamSerializer,
     CompetitionParticipantSerializer,
     CompetitionJoinRequestSerializer,
+    CompetitionBuilderSerializer,
+    CompetitionInvitationSerializer,
+    OutboundMessageSerializer,
     CompetitionRoundResultSerializer,
     CompetitionLeaderboardEntrySerializer,
     CompetitionJudgingMetricSerializer,
     UserSavedCompetitionSerializer,
     UserCompetitionWatchSerializer,
+    CompetitionMaterialSerializer,
+    RecentlyViewedMaterialSerializer,
+    UserProfileSerializer,
+    UserBadgeSerializer,
+    CertificateSerializer,
+    UserMaterialSerializer,
 )
+
+
+
+def recompute_competition_timing(competition, now=None, save=True):
+    """Synchronize status flags with competition and round deadlines.
+
+    Round activity is sequential: a later round cannot become active until every
+    previous round has ended. Submissions are open only inside the active round,
+    not during the whole competition window.
+    """
+    if competition.status in ["draft", "archived"]:
+        return competition
+
+    now = now or timezone.now()
+    rounds = list(competition.rounds.all().order_by("sort_order", "starts_at", "id"))
+
+    registration_open = False
+    if competition.registration_starts_at and competition.registration_ends_at:
+        registration_open = competition.registration_starts_at <= now <= competition.registration_ends_at
+    elif competition.registration_ends_at:
+        registration_open = now <= competition.registration_ends_at
+    elif competition.registration_starts_at:
+        registration_open = competition.registration_starts_at <= now and (not competition.starts_at or now < competition.starts_at)
+
+    active_round = None
+    completed_rounds = 0
+    blocked_by_previous = False
+    for index, round_obj in enumerate(rounds, start=1):
+        if round_obj.ends_at and now > round_obj.ends_at:
+            completed_rounds = index
+            continue
+        if blocked_by_previous:
+            break
+        if round_obj.starts_at and round_obj.ends_at and round_obj.starts_at <= now <= round_obj.ends_at:
+            active_round = (index, round_obj)
+            break
+        # Once we reach the first not-finished round, later rounds are not allowed
+        # to become active even if their dates overlap by mistake.
+        blocked_by_previous = True
+
+    submissions_open = bool(active_round and active_round[1].submission_required)
+
+    if competition.starts_at and now < competition.starts_at:
+        status_value = "registration_open" if registration_open else "upcoming"
+    elif competition.starts_at and competition.ends_at and competition.starts_at <= now <= competition.ends_at:
+        status_value = "active"
+    elif competition.judging_starts_at and competition.judging_ends_at and competition.judging_starts_at <= now <= competition.judging_ends_at:
+        status_value = "judging"
+    elif competition.ends_at and now > competition.ends_at:
+        if competition.judging_starts_at and now < competition.judging_starts_at:
+            status_value = "judging"
+        elif competition.judging_ends_at and now <= competition.judging_ends_at:
+            status_value = "judging"
+        else:
+            status_value = "finished"
+    else:
+        status_value = competition.status or "upcoming"
+
+    round_deadline = None
+    if active_round:
+        competition.current_round = active_round[0]
+        round_deadline = active_round[1].ends_at
+    elif status_value in ["upcoming", "registration_open"]:
+        competition.current_round = 0
+    elif status_value == "active" and rounds:
+        competition.current_round = min(len(rounds), completed_rounds + 1)
+    elif status_value in ["judging", "finished"]:
+        competition.current_round = len(rounds) or competition.total_rounds
+
+    timer_deadline = None
+    if status_value == "registration_open":
+        timer_deadline = competition.registration_ends_at or competition.starts_at
+    elif status_value == "upcoming":
+        timer_deadline = competition.starts_at
+    elif status_value == "active":
+        if round_deadline:
+            timer_deadline = round_deadline
+        elif rounds and competition.current_round and competition.current_round <= len(rounds):
+            timer_deadline = rounds[competition.current_round - 1].starts_at or competition.ends_at
+        else:
+            timer_deadline = competition.ends_at
+    elif status_value == "judging":
+        timer_deadline = competition.judging_ends_at or competition.results_public_at
+
+    competition.status = status_value
+    competition.registration_open = registration_open
+    competition.submissions_open = submissions_open
+    competition.timer_deadline = timer_deadline
+    competition.total_rounds = max(1, len(rounds) or competition.total_rounds)
+    competition.trending_score = (competition.participants_count * 3) + competition.views_count + (competition.followers_count * 2) + (competition.comments_count * 0.5)
+
+    if save:
+        competition.save(update_fields=[
+            "status", "registration_open", "submissions_open", "timer_deadline",
+            "current_round", "total_rounds", "trending_score", "updated_at",
+        ])
+    return competition
+
+def get_or_create_profile(user, defaults=None):
+    defaults = defaults or {}
+    profile, _ = UserProfile.objects.get_or_create(
+        user=user,
+        defaults={
+            "display_name": user.get_full_name() or user.get_username(),
+            "primary_role": defaults.get("primary_role") or "participant",
+            "country": defaults.get("country") or "Ukraine",
+        },
+    )
+    return profile
+
+def serialize_user(user):
+    profile = get_or_create_profile(user)
+    return {
+        "id": user.id,
+        "username": user.get_username(),
+        "displayName": profile.display_name or user.get_full_name() or user.get_username(),
+        "email": getattr(user, "email", ""),
+        "primaryRole": profile.primary_role,
+        "bio": profile.bio,
+        "organization": profile.organization,
+        "position": profile.position,
+        "phone": profile.phone,
+        "country": profile.country,
+        "city": profile.city,
+        "skills": profile.skills,
+        "interests": profile.interests,
+        "links": profile.links,
+        "avatar": UserProfileSerializer(profile).data.get("avatar"),
+        "avatarUrl": UserProfileSerializer(profile).data.get("avatar_url"),
+        "isRegistered": True,
+    }
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class CsrfView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({"detail": "CSRF cookie set"})
+
+
+class CurrentUserView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return Response({"authenticated": False, "user": None})
+
+        return Response({
+            "authenticated": True,
+            "user": serialize_user(request.user),
+        })
+
+
+class DevLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        User = get_user_model()
+        display_name = request.data.get("displayName") or "Demo User"
+        email = request.data.get("email") or "demo@example.com"
+        primary_role = request.data.get("primaryRole") or request.data.get("primary_role") or "participant"
+        account_key = request.data.get("accountKey") or request.data.get("account_key")
+        email_base = (email.split("@")[0] if email else "demo_user").replace(".", "_").replace("+", "_")
+        username = request.data.get("username") or account_key or f"{email_base}_{primary_role}"
+
+        user, created = User.objects.get_or_create(
+            username=username,
+            defaults={"email": email, "first_name": display_name},
+        )
+
+        changed = False
+        if email and getattr(user, "email", "") != email:
+            user.email = email
+            changed = True
+        if display_name and not user.get_full_name():
+            user.first_name = display_name
+            changed = True
+        if changed:
+            user.save()
+
+        profile = get_or_create_profile(user, {"primary_role": primary_role})
+        profile.display_name = display_name or profile.display_name
+        profile.primary_role = primary_role
+        profile.save(update_fields=["display_name", "primary_role", "updated_at"])
+
+        login(request, user)
+
+        return Response({
+            "authenticated": True,
+            "user": serialize_user(user),
+        })
+
+
+class LogoutView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        logout(request)
+        return Response({"authenticated": False})
+
+
+class HealthCheckView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        # Reaching this endpoint proves that Django has started and the database
+        # connection is usable. The seeded flag helps the frontend keep the
+        # splash screen visible until demo competitions are actually available.
+        try:
+            competitions_count = Competition.objects.count()
+        except Exception as exc:
+            return Response({
+                "ready": False,
+                "database": "unavailable",
+                "detail": str(exc),
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response({
+            "ready": competitions_count > 0,
+            "database": "ok",
+            "competitionsCount": competitions_count,
+        })
 
 
 class LandingCompetitionsView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        qs = Competition.objects.filter(is_public=True)
+        now = timezone.now()
+        base_qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
+
+        # Keep the database status in sync before filtering. This is intentionally
+        # limited for the demo dataset; in production it should move to a periodic job.
+        for competition in base_qs[:100]:
+            recompute_competition_timing(competition, now=now, save=True)
+
+        qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
 
         search = request.query_params.get("search")
-        tab = request.query_params.get("tab")
+        tab = request.query_params.get("tab") or "trending"
         statuses = request.query_params.getlist("status")
         event_types = request.query_params.getlist("event_type")
         participation_types = request.query_params.getlist("participation_type")
+        access_modes = request.query_params.getlist("access_mode")
+        visibility_modes = request.query_params.getlist("visibility_mode")
         industries = request.query_params.getlist("industry")
         difficulties = request.query_params.getlist("difficulty")
+        languages = request.query_params.getlist("language")
 
         if search:
-            qs = qs.filter(
-                Q(name__icontains=search) |
-                Q(short_description__icontains=search)
-            )
-
+            qs = qs.filter(Q(name__icontains=search) | Q(short_description__icontains=search))
         if statuses:
             qs = qs.filter(status__in=statuses)
-
         if event_types:
             qs = qs.filter(event_type__in=event_types)
-
         if participation_types:
             qs = qs.filter(participation_type__in=participation_types)
-
+        if access_modes:
+            qs = qs.filter(access_mode__in=access_modes)
+        if visibility_modes:
+            qs = qs.filter(visibility_mode__in=visibility_modes)
         if industries:
             qs = qs.filter(industry__in=industries)
-
         if difficulties:
             qs = qs.filter(difficulty__in=difficulties)
+        if languages:
+            qs = qs.filter(language__in=languages)
 
-        if tab == "trending" or not tab:
-            qs = qs.order_by("-trending_score", "-created_at")
+        if tab == "active":
+            qs = qs.filter(status__in=["registration_open", "active", "judging"]).order_by("timer_deadline", "starts_at", "name")
+        elif tab == "trending":
+            # Trending is driven by measurable attention: approved participants, views, follows and comments.
+            qs = qs.exclude(status__in=["finished", "archived"]).annotate(
+                attention_score=ExpressionWrapper(
+                    F("participants_count") * 3.0 + F("views_count") + F("followers_count") * 2.0 + F("comments_count") * 0.5,
+                    output_field=FloatField(),
+                )
+            ).order_by("-attention_score", "timer_deadline", "-created_at")
         elif tab == "new":
-            qs = qs.order_by("-created_at")
+            recently_started = now - timedelta(days=2)
+            qs = qs.exclude(status__in=["finished", "archived"]).filter(
+                Q(status="upcoming") | Q(starts_at__gte=recently_started)
+            ).order_by("starts_at", "-created_at")
         elif tab == "open_submission":
-            qs = qs.filter(submissions_open=True).order_by("-created_at")
+            qs = qs.exclude(status__in=["finished", "archived"]).filter(submissions_open=True).order_by("timer_deadline", "-created_at")
         elif tab == "live_stream":
-            qs = qs.filter(
-                is_live_stream_enabled=True,
-                is_online_now=True,
-            ).order_by("-created_at")
+            qs = qs.exclude(status__in=["finished", "archived"]).filter(is_live_stream_enabled=True, is_online_now=True).order_by("-created_at")
+        elif tab == "completed":
+            qs = qs.filter(status__in=["finished", "archived"]).order_by("-ends_at", "-updated_at")
 
-        serializer = CompetitionCardSerializer(
-            qs[:20],
-            many=True,
-            context={"request": request},
-        )
+        serializer = CompetitionCardSerializer(qs[:20], many=True, context={"request": request})
         return Response(serializer.data)
 
 
@@ -99,28 +363,36 @@ class LandingSidebarView(APIView):
                 "saved_competitions": [],
             })
 
-        last_competitions = Competition.objects.filter(
-            is_public=True
-        ).order_by("-created_at")[:6]
+        recent_records = (
+            RecentlyViewedCompetition.objects.filter(user=request.user, competition__is_public=True)
+            .select_related("competition")
+            .order_by("-viewed_at")[:6]
+        )
+        seen_competition_ids = set()
+        recent_competitions = []
+        for record in recent_records:
+            if record.competition_id not in seen_competition_ids:
+                recent_competitions.append(record.competition)
+                seen_competition_ids.add(record.competition_id)
 
-        saved_ids = UserSavedCompetition.objects.filter(
-            user=request.user
-        ).values_list("competition_id", flat=True)
+        recent_material_records = (
+            RecentlyViewedMaterial.objects.filter(user=request.user, material__competition__is_public=True)
+            .select_related("material", "material__competition")
+            .order_by("-viewed_at")[:6]
+        )
 
-        saved_competitions = Competition.objects.filter(
-            id__in=saved_ids,
-            is_public=True,
-        ).order_by("-created_at")[:6]
+        saved_records = (
+            UserSavedCompetition.objects.filter(user=request.user, competition__is_public=True)
+            .select_related("competition")
+            .order_by("-created_at")[:6]
+        )
+        saved_competitions = [record.competition for record in saved_records]
 
         return Response({
-            "last_competitions": SidebarCompetitionSerializer(
-                last_competitions,
-                many=True,
-            ).data,
-            "saved_competitions": SidebarCompetitionSerializer(
-                saved_competitions,
-                many=True,
-            ).data,
+            "recently_viewed": SidebarCompetitionSerializer(recent_competitions, many=True).data,
+            "recent_materials": RecentlyViewedMaterialSerializer(recent_material_records, many=True).data,
+            "last_competitions": SidebarCompetitionSerializer(recent_competitions, many=True).data,
+            "saved_competitions": SidebarCompetitionSerializer(saved_competitions, many=True).data,
         })
 
 
@@ -143,8 +415,19 @@ class LandingFiltersView(APIView):
                 {"value": "hybrid", "label": "Hybrid"},
             ],
             "participation_type": [
-                {"value": "team", "label": "Team"},
                 {"value": "individual", "label": "Individual"},
+                {"value": "team", "label": "Team"},
+                {"value": "mixed", "label": "Mixed"},
+            ],
+            "access_mode": [
+                {"value": "open", "label": "Open registration"},
+                {"value": "application", "label": "Application review"},
+                {"value": "invite_only", "label": "Invite only"},
+            ],
+            "visibility_mode": [
+                {"value": "public", "label": "Public catalog"},
+                {"value": "unlisted", "label": "Unlisted link"},
+                {"value": "private", "label": "Private"},
             ],
             "industry": [
                 {"value": "programming", "label": "Programming"},
@@ -158,6 +441,15 @@ class LandingFiltersView(APIView):
                 {"value": "advanced", "label": "Advanced"},
                 {"value": "mixed", "label": "Mixed"},
             ],
+            "language": [
+                {"value": "uk", "label": "Ukrainian"},
+                {"value": "en", "label": "English"},
+                {"value": "pl", "label": "Polish"},
+                {"value": "de", "label": "German"},
+                {"value": "fr", "label": "French"},
+                {"value": "es", "label": "Spanish"},
+                {"value": "other", "label": "Other"},
+            ],
         })
 
 
@@ -170,6 +462,21 @@ class CompetitionDetailView(APIView):
             pk=pk,
             is_public=True,
         )
+
+        recompute_competition_timing(competition, save=True)
+
+        if request.user.is_authenticated:
+            viewed, created = RecentlyViewedCompetition.objects.get_or_create(
+                user=request.user,
+                competition=competition,
+            )
+            if not created:
+                RecentlyViewedCompetition.objects.filter(pk=viewed.pk).update(
+                    view_count=F("view_count") + 1,
+                    viewed_at=timezone.now(),
+                )
+            Competition.objects.filter(pk=competition.pk).update(views_count=F("views_count") + 1)
+            competition.refresh_from_db(fields=["views_count"])
 
         serializer = CompetitionDetailSerializer(
             competition,
@@ -192,11 +499,13 @@ class ToggleSavedCompetitionView(APIView):
         return Response({"saved": True}, status=status.HTTP_200_OK)
 
     def delete(self, request, pk):
-        competition = get_object_or_404(Competition, pk=pk)
-
+        # Removing a saved item must be idempotent. Profile/sidebar state can
+        # contain stale IDs after reseeding the local database, so a DELETE for
+        # a missing competition should still clean up any stale relation and
+        # return a successful unsaved state instead of breaking the UI with 404.
         UserSavedCompetition.objects.filter(
             user=request.user,
-            competition=competition,
+            competition_id=pk,
         ).delete()
 
         return Response({"saved": False}, status=status.HTTP_200_OK)
@@ -252,6 +561,24 @@ class ToggleCompetitionWatchView(APIView):
         ).delete()
 
         return Response({"watching": False}, status=status.HTTP_200_OK)
+
+
+class MarkMaterialViewedView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        material = get_object_or_404(CompetitionMaterial, pk=pk, competition__is_public=True)
+        viewed, created = RecentlyViewedMaterial.objects.get_or_create(
+            user=request.user,
+            material=material,
+        )
+        if not created:
+            RecentlyViewedMaterial.objects.filter(pk=viewed.pk).update(
+                view_count=F("view_count") + 1,
+                viewed_at=timezone.now(),
+            )
+            viewed.refresh_from_db()
+        return Response(RecentlyViewedMaterialSerializer(viewed).data, status=status.HTTP_200_OK)
 
 
 class CompetitionAnnouncementsView(APIView):
@@ -315,8 +642,9 @@ class CompetitionParticipantsView(APIView):
         )
 
         participants = CompetitionParticipant.objects.filter(
-            competition=competition
-        ).select_related("user").order_by("display_name")
+            competition=competition,
+            role__in=["participant", "team_member"],
+        ).select_related("user", "team").order_by("display_name")
 
         serializer = CompetitionParticipantSerializer(
             participants,
@@ -328,45 +656,223 @@ class CompetitionParticipantsView(APIView):
 class JoinCompetitionView(APIView):
     permission_classes = [IsAuthenticated]
 
-    ALLOWED_ROLES = {"participant", "team", "observer"}
+    ALLOWED_ROLES = {"participant", "team_member"}
 
     def post(self, request, pk):
         competition = get_object_or_404(Competition, pk=pk)
+        recompute_competition_timing(competition, save=True)
 
-        role = (request.data.get("role") or "").strip()
+        profile = get_or_create_profile(request.user)
+        if profile.primary_role != "participant" or request.user.is_staff:
+            return Response(
+                {"detail": "Only participant accounts can register for competitions."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not competition.registration_open or competition.status not in ["registration_open", "upcoming", "active"]:
+            return Response(
+                {"detail": "Registration for this competition is not open."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        role = (request.data.get("role") or "participant").strip()
+        if role == "team":
+            role = "team_member"
         if role not in self.ALLOWED_ROLES:
             return Response(
                 {"detail": "Invalid role."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        join_request, _ = CompetitionJoinRequest.objects.get_or_create(
+        existing_member = CompetitionParticipant.objects.filter(
             competition=competition,
             user=request.user,
-            role=role,
-            defaults={"status": "approved"},
-        )
+        ).select_related("team").first()
+        if existing_member and existing_member.status in ["approved", "pending"]:
+            return Response({
+                "detail": "You already have a participation record for this competition.",
+                "status": existing_member.status,
+                "role": existing_member.role,
+                "team": CompetitionTeamSerializer(existing_member.team).data if existing_member.team else None,
+            }, status=status.HTTP_200_OK)
+
+        team = None
+        team_name = (request.data.get("team_name") or "").strip()
+        if role == "team_member":
+            if not team_name:
+                return Response(
+                    {"detail": "Team name is required for team participation."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            team, _ = CompetitionTeam.objects.get_or_create(
+                competition=competition,
+                name=team_name,
+                defaults={
+                    "captain": request.user,
+                    "status": "pending",
+                    "description": (request.data.get("team_description") or "").strip(),
+                },
+            )
 
         full_name = request.user.get_full_name().strip()
         display_name = full_name or getattr(request.user, "username", "") or getattr(request.user, "email", "")
+        message = (request.data.get("message") or "").strip()
 
-        CompetitionParticipant.objects.get_or_create(
+        # All participant registrations are reviewable. Even open competitions keep
+        # a pending request so the organizer can approve/reject it manually.
+        initial_status = "pending"
+
+        join_request, _ = CompetitionJoinRequest.objects.update_or_create(
+            competition=competition,
+            user=request.user,
+            role=role,
+            defaults={
+                "status": initial_status,
+                "team": team,
+                "team_name": team.name if team else "",
+                "message": message,
+            },
+        )
+
+        CompetitionParticipant.objects.update_or_create(
             competition=competition,
             user=request.user,
             defaults={
                 "display_name": display_name,
                 "role": role,
+                "status": initial_status,
+                "team": team,
                 "is_active_now": False,
             },
         )
 
+        if team:
+            team.status = "pending"
+            team.save(update_fields=["status", "updated_at"])
+
         competition.participants_count = CompetitionParticipant.objects.filter(
-            competition=competition
+            competition=competition,
+            status="approved",
+            role__in=["participant", "team_member"],
         ).count()
         competition.save(update_fields=["participants_count"])
 
         serializer = CompetitionJoinRequestSerializer(join_request)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class CompetitionJoinRequestReviewView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        join_request = get_object_or_404(
+            CompetitionJoinRequest.objects.select_related("competition", "user", "team"),
+            pk=pk,
+            status="pending",
+        )
+        competition = join_request.competition
+        profile = get_or_create_profile(request.user)
+        is_admin = request.user.is_staff or profile.primary_role == "admin"
+        is_organizer = CompetitionParticipant.objects.filter(
+            competition=competition,
+            user=request.user,
+            role="organizer",
+            status="approved",
+        ).exists()
+        if not (is_admin or is_organizer):
+            return Response({"detail": "Only the competition organizer or administrator can review this request."}, status=status.HTTP_403_FORBIDDEN)
+
+        decision = (request.data.get("decision") or request.data.get("status") or "").strip().lower()
+        if decision not in ["approved", "rejected"]:
+            return Response({"detail": "Decision must be approved or rejected."}, status=status.HTTP_400_BAD_REQUEST)
+
+        now = timezone.now()
+        join_request.status = decision
+        join_request.reviewed_by = request.user
+        join_request.reviewed_at = now
+        join_request.save(update_fields=["status", "reviewed_by", "reviewed_at"])
+
+        participant, _ = CompetitionParticipant.objects.update_or_create(
+            competition=competition,
+            user=join_request.user,
+            defaults={
+                "display_name": join_request.user.get_full_name() or join_request.user.get_username() or join_request.user.email,
+                "role": join_request.role,
+                "status": decision,
+                "team": join_request.team,
+                "is_active_now": False,
+            },
+        )
+        if join_request.team:
+            join_request.team.status = decision
+            join_request.team.save(update_fields=["status", "updated_at"])
+
+        competition.participants_count = CompetitionParticipant.objects.filter(
+            competition=competition,
+            status="approved",
+            role__in=["participant", "team_member"],
+        ).count()
+        competition.save(update_fields=["participants_count"])
+
+        return Response({
+            "request": CompetitionJoinRequestSerializer(join_request).data,
+            "participant": CompetitionParticipantSerializer(participant).data,
+            "participants_count": competition.participants_count,
+        })
+
+
+class TeamManagementView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        team = get_object_or_404(
+            CompetitionTeam.objects.select_related("competition", "captain").prefetch_related("members__user"),
+            pk=pk,
+        )
+        if team.captain_id != request.user.id:
+            return Response(
+                {"detail": "Only the current team captain can manage team access and transfer captain rights."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        action = (request.data.get("action") or "").strip()
+        member_id = request.data.get("member_id")
+
+        if action == "transfer_captain":
+            member = get_object_or_404(
+                CompetitionParticipant.objects.select_related("user"),
+                pk=member_id,
+                team=team,
+                status__in=["pending", "approved"],
+            )
+            if not member.user:
+                return Response({"detail": "Selected member does not have an account."}, status=status.HTTP_400_BAD_REQUEST)
+            if member.user_id == request.user.id:
+                return Response({"detail": "You are already the captain of this team."}, status=status.HTTP_400_BAD_REQUEST)
+            team.captain = member.user
+            team.save(update_fields=["captain", "updated_at"])
+
+        elif action == "update_member":
+            member = get_object_or_404(CompetitionParticipant, pk=member_id, team=team)
+            next_status = (request.data.get("status") or member.status).strip()
+            next_role = (request.data.get("role") or member.role).strip()
+            allowed_statuses = {"pending", "approved", "withdrawn"}
+            allowed_roles = {"team_member", "participant"}
+            if next_status not in allowed_statuses:
+                return Response({"detail": "Unsupported member status for captain management."}, status=status.HTTP_400_BAD_REQUEST)
+            if next_role not in allowed_roles:
+                return Response({"detail": "Unsupported member role for captain management."}, status=status.HTTP_400_BAD_REQUEST)
+            if member.user_id == request.user.id and next_status == "withdrawn":
+                return Response({"detail": "Transfer captain rights before removing yourself from the team."}, status=status.HTTP_400_BAD_REQUEST)
+            member.status = next_status
+            member.role = next_role
+            member.save(update_fields=["status", "role"])
+
+        else:
+            return Response({"detail": "Unsupported team management action."}, status=status.HTTP_400_BAD_REQUEST)
+
+        team = CompetitionTeam.objects.prefetch_related("members__user", "members__user__profile").select_related("competition", "captain").get(pk=team.pk)
+        return Response(CompetitionTeamSerializer(team).data)
 
 
 class CompetitionResultsView(APIView):
@@ -397,6 +903,403 @@ class CompetitionResultsView(APIView):
                 many=True,
             ).data,
         })
+
+
+class ProfileDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        profile = get_or_create_profile(user)
+        role = profile.primary_role or "participant"
+
+        saved_ids = UserSavedCompetition.objects.filter(user=user).values_list("competition_id", flat=True)
+        saved = Competition.objects.filter(id__in=saved_ids, is_public=True).order_by("-saved_by_users__created_at")[:12]
+
+        recent_records = RecentlyViewedCompetition.objects.filter(user=user, competition__is_public=True).select_related("competition").order_by("-viewed_at")[:12]
+        recently_viewed = [record.competition for record in recent_records]
+
+        memberships = CompetitionParticipant.objects.filter(user=user).select_related("competition", "team")
+        approved_competitions = Competition.objects.filter(
+            participant_entries__in=memberships.filter(status="approved", role__in=["participant", "team_member"]),
+            is_public=True,
+        ).distinct()
+
+        active = approved_competitions.filter(status__in=["upcoming", "registration_open", "active", "judging"]).order_by("timer_deadline", "starts_at")[:12]
+        archived = approved_competitions.filter(status__in=["finished", "archived"]).order_by("-ends_at", "-updated_at")[:12]
+
+        teams = CompetitionTeam.objects.filter(members__user=user).prefetch_related("members__user", "members__user__profile").select_related("competition", "captain").distinct()[:12]
+        drafts = Competition.objects.filter(
+            participant_entries__user=user,
+            participant_entries__role="organizer",
+        ).distinct().order_by("-updated_at")[:12]
+
+        pending_requests = []
+        if role == "organizer":
+            organized_ids = CompetitionParticipant.objects.filter(
+                user=user,
+                role="organizer",
+                status="approved",
+            ).values_list("competition_id", flat=True)
+            incoming = CompetitionJoinRequest.objects.filter(
+                competition_id__in=organized_ids,
+                status="pending",
+            ).select_related("competition", "user", "team").order_by("-created_at")[:20]
+            pending_requests = [
+                {
+                    "id": item.id,
+                    "type": "join_request",
+                    "title": item.user.get_full_name() or item.user.get_username(),
+                    "competition_id": item.competition_id,
+                    "competition_name": item.competition.name,
+                    "role": item.role,
+                    "status": item.status,
+                    "team_name": item.team_name or (item.team.name if item.team else ""),
+                    "message": item.message,
+                    "created_at": item.created_at,
+                }
+                for item in incoming
+            ]
+        elif role == "admin" or user.is_staff:
+            organizer_drafts = Competition.objects.filter(
+                participant_entries__role="organizer",
+                status="draft",
+            ).select_related().distinct().order_by("-updated_at")[:20]
+            pending_requests = [
+                {
+                    "id": item.id,
+                    "type": "competition_creation_request",
+                    "title": item.name,
+                    "competition_id": item.id,
+                    "competition_name": item.name,
+                    "status": item.status,
+                    "message": item.short_description or "Organizer draft awaiting administrative review.",
+                    "created_at": item.created_at,
+                }
+                for item in organizer_drafts
+            ]
+        else:
+            own_pending = CompetitionJoinRequest.objects.filter(
+                user=user,
+                status="pending",
+            ).select_related("competition", "team").order_by("-created_at")[:20]
+            pending_requests = [
+                {
+                    "id": item.id,
+                    "type": "my_join_request",
+                    "title": item.competition.name,
+                    "competition_id": item.competition_id,
+                    "competition_name": item.competition.name,
+                    "role": item.role,
+                    "status": item.status,
+                    "team_name": item.team_name or (item.team.name if item.team else ""),
+                    "message": item.message,
+                    "created_at": item.created_at,
+                }
+                for item in own_pending
+            ]
+
+        return Response({
+            "user": serialize_user(user),
+            "profile": UserProfileSerializer(profile).data,
+            "active_competitions": CompetitionCardSerializer(active, many=True, context={"request": request}).data,
+            "saved_competitions": CompetitionCardSerializer(saved, many=True, context={"request": request}).data,
+            "recently_viewed": CompetitionCardSerializer(recently_viewed, many=True, context={"request": request}).data,
+            "archived_competitions": CompetitionCardSerializer(archived, many=True, context={"request": request}).data,
+            "pending_requests": pending_requests,
+            "pending_competitions": CompetitionCardSerializer(
+                Competition.objects.filter(id__in=[item.get("competition_id") for item in pending_requests if item.get("competition_id")], is_public=True).distinct()[:12],
+                many=True,
+                context={"request": request},
+            ).data,
+            "draft_competitions": CompetitionCardSerializer(drafts, many=True, context={"request": request}).data,
+            "teams": CompetitionTeamSerializer(teams, many=True).data,
+            "badges": UserBadgeSerializer(UserBadge.objects.filter(user=user)[:12], many=True).data,
+            "certificates": CertificateSerializer(Certificate.objects.filter(user=user)[:12], many=True).data,
+            "materials": UserMaterialSerializer(UserMaterial.objects.filter(user=user)[:12], many=True).data,
+            "stats": {
+                "active": active.count(),
+                "pending": len(pending_requests),
+                "saved": UserSavedCompetition.objects.filter(user=user).count(),
+                "archived": archived.count(),
+                "badges": UserBadge.objects.filter(user=user).count(),
+                "certificates": Certificate.objects.filter(user=user).count(),
+            },
+        })
+
+    def patch(self, request):
+        profile = get_or_create_profile(request.user)
+        data = request.data
+        mapping = {
+            "displayName": "display_name",
+            "primaryRole": "primary_role",
+        }
+        allowed = ["bio", "organization", "position", "phone", "country", "city", "skills", "interests", "links"]
+        if "email" in data:
+            request.user.email = data.get("email") or ""
+            request.user.save(update_fields=["email"])
+        if data.get("avatarDataUrl"):
+            links = dict(profile.links or {})
+            links["avatarDataUrl"] = data["avatarDataUrl"]
+            profile.links = links
+        for frontend_key, model_key in mapping.items():
+            if frontend_key in data:
+                setattr(profile, model_key, data[frontend_key])
+        for key in allowed:
+            if key in data:
+                setattr(profile, key, data[key])
+        profile.save()
+        return Response({"user": serialize_user(request.user), "profile": UserProfileSerializer(profile).data})
+
+
+
+BUILDER_DATETIME_FIELDS = [
+    "registration_starts_at",
+    "registration_ends_at",
+    "starts_at",
+    "ends_at",
+    "judging_starts_at",
+    "judging_ends_at",
+    "results_public_at",
+    "timer_deadline",
+]
+
+def normalize_builder_payload(data):
+    payload = data.copy()
+    for field in BUILDER_DATETIME_FIELDS:
+        if payload.get(field) == "":
+            payload[field] = None
+
+    normalized_rounds = []
+    for round_item in payload.get("rounds") or []:
+        item = round_item.copy()
+        for field in ["starts_at", "ends_at"]:
+            if item.get(field) == "":
+                item[field] = None
+        normalized_rounds.append(item)
+    if "rounds" in payload:
+        payload["rounds"] = normalized_rounds
+    return payload
+
+def user_can_edit_competition(user, competition):
+    if not user.is_authenticated:
+        return False
+    profile = get_or_create_profile(user)
+    if profile.primary_role == "admin" or user.is_staff:
+        return True
+    if profile.primary_role != "organizer":
+        return False
+    if CompetitionParticipant.objects.filter(competition=competition, user=user, role="organizer").exists():
+        return True
+    return competition.status == "draft" and not CompetitionParticipant.objects.filter(competition=competition, role="organizer").exists()
+
+
+def ensure_organizer_membership(user, competition):
+    display_name = user.get_full_name() or user.get_username() or getattr(user, "email", "")
+    CompetitionParticipant.objects.update_or_create(
+        competition=competition,
+        user=user,
+        defaults={
+            "display_name": display_name,
+            "role": "organizer",
+            "status": "approved",
+        },
+    )
+
+
+class CompetitionDraftListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = Competition.objects.filter(
+            participant_entries__user=request.user,
+            participant_entries__role="organizer",
+            status="draft",
+        ).distinct().order_by("-updated_at")
+        return Response(CompetitionBuilderSerializer(qs, many=True, context={"request": request}).data)
+
+    def post(self, request):
+        data = normalize_builder_payload(request.data)
+        data.setdefault("name", "Untitled competition")
+        if data.get("name") == "Untitled competition":
+            existing = Competition.objects.filter(
+                participant_entries__user=request.user,
+                participant_entries__role="organizer",
+                status="draft",
+                name="Untitled competition",
+            ).distinct().order_by("-updated_at").first()
+            if existing and not existing.short_description and not existing.full_description:
+                return Response(
+                    CompetitionBuilderSerializer(existing, context={"request": request}).data,
+                    status=status.HTTP_200_OK,
+                )
+        data.setdefault("status", "draft")
+        data.setdefault("event_type", "online")
+        data.setdefault("participation_type", "individual")
+        data.setdefault("industry", "programming")
+        data.setdefault("difficulty", "mixed")
+        data.setdefault("language", "uk")
+        data.setdefault("access_mode", "application")
+        data.setdefault("visibility_mode", "public")
+        data.setdefault("is_public", data.get("visibility_mode") == "public")
+        data.setdefault("show_in_catalog", data.get("visibility_mode") == "public")
+        serializer = CompetitionBuilderSerializer(data=data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        competition = serializer.save()
+        ensure_organizer_membership(request.user, competition)
+        return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
+class CompetitionBuilderDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot edit this competition."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
+
+    def patch(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot edit this competition."}, status=status.HTTP_403_FORBIDDEN)
+        serializer = CompetitionBuilderSerializer(competition, data=normalize_builder_payload(request.data), partial=True, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        competition = serializer.save()
+        ensure_organizer_membership(request.user, competition)
+        return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
+
+
+class CompetitionPublishView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot publish this competition."}, status=status.HTTP_403_FORBIDDEN)
+
+        missing = []
+        for field in ["name", "short_description", "industry", "participation_type", "access_mode", "ends_at"]:
+            if not getattr(competition, field):
+                missing.append(field)
+        if missing:
+            return Response({"detail": "Competition is not ready for publication.", "missing": missing}, status=status.HTTP_400_BAD_REQUEST)
+
+        published_at = timezone.now()
+        if not competition.starts_at:
+            competition.starts_at = published_at
+
+        if competition.ends_at and competition.ends_at <= competition.starts_at:
+            return Response({
+                "detail": "Competition end must be later than competition start.",
+                "errors": {"ends_at": "Competition end must be later than the publish/start time."},
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        rounds = list(competition.rounds.all().order_by("sort_order", "id"))
+        previous_end = None
+        round_errors = []
+        for index, round_obj in enumerate(rounds):
+            if not round_obj.starts_at:
+                round_obj.starts_at = competition.starts_at if previous_end is None else previous_end
+            if not round_obj.ends_at:
+                round_errors.append({"index": index, "ends_at": "Round end time is required."})
+                continue
+            if round_obj.starts_at < competition.starts_at:
+                round_errors.append({"index": index, "starts_at": "Round cannot start before the competition starts."})
+            if competition.ends_at and round_obj.ends_at > competition.ends_at:
+                round_errors.append({"index": index, "ends_at": "Round cannot end after the competition ends."})
+            if round_obj.ends_at <= round_obj.starts_at:
+                round_errors.append({"index": index, "ends_at": "Round end must be later than round start."})
+            if previous_end and round_obj.starts_at < previous_end:
+                round_errors.append({"index": index, "starts_at": "Next round cannot start before the previous round ends."})
+            previous_end = round_obj.ends_at
+
+        if round_errors:
+            return Response({
+                "detail": "Competition rounds are not valid.",
+                "errors": {"rounds": round_errors},
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        for round_obj in rounds:
+            round_obj.save(update_fields=["starts_at", "updated_at"] if hasattr(round_obj, "updated_at") else ["starts_at"])
+
+        # A published draft must leave the draft state before timing is recomputed.
+        # recompute_competition_timing() intentionally skips draft/archived items,
+        # so keeping status="draft" here made newly published competitions invisible
+        # in the public catalog and detail routes.
+        competition.status = "upcoming"
+        competition.is_public = competition.visibility_mode == "public"
+        competition.show_in_catalog = competition.visibility_mode == "public"
+        competition.publish_ready = True
+        competition.completion_percent = 100
+        competition.save(update_fields=["starts_at", "status", "is_public", "show_in_catalog", "publish_ready", "completion_percent", "updated_at"])
+        recompute_competition_timing(competition, save=True)
+        return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
+
+
+class CompetitionInvitationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot view invitations for this competition."}, status=status.HTTP_403_FORBIDDEN)
+        invitations = competition.invitations.all()[:100]
+        return Response(CompetitionInvitationSerializer(invitations, many=True).data)
+
+    def post(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot invite users to this competition."}, status=status.HTTP_403_FORBIDDEN)
+
+        recipients = request.data.get("recipients") or []
+        if isinstance(recipients, str):
+            recipients = [line.strip() for line in recipients.replace(",", "\n").splitlines() if line.strip()]
+        target_type = request.data.get("target_type") or "individual"
+        team_name = (request.data.get("team_name") or "").strip()
+        message = request.data.get("message") or ""
+        queue_messages = bool(request.data.get("queue_messages", True))
+
+        created = []
+        for email in recipients:
+            token = secrets.token_urlsafe(32)
+            invitation, _ = CompetitionInvitation.objects.update_or_create(
+                competition=competition,
+                email=email,
+                target_type=target_type,
+                team_name=team_name if target_type == "team" else "",
+                defaults={
+                    "invited_by": request.user,
+                    "token": token,
+                    "status": "queued" if queue_messages else "draft",
+                    "message": message,
+                },
+            )
+            created.append(invitation)
+            if queue_messages:
+                accept_path = f"/competitions/{competition.id}?invite={invitation.token}"
+                OutboundMessage.objects.create(
+                    competition=competition,
+                    invitation=invitation,
+                    recipient_email=email,
+                    channel="email",
+                    subject=f"Invitation: {competition.name}",
+                    body=(message or f"You are invited to join {competition.name}.") + f"\n\nInvitation link: {accept_path}",
+                    status="queued",
+                    queued_at=timezone.now(),
+                )
+        return Response(CompetitionInvitationSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
+
+
+class CompetitionOutboundMessagesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot view messages for this competition."}, status=status.HTTP_403_FORBIDDEN)
+        messages = competition.outbound_messages.all()[:100]
+        return Response(OutboundMessageSerializer(messages, many=True).data)
 
 
 class CompetitionJudgingView(APIView):

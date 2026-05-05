@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 from django.utils.text import slugify
@@ -5,6 +7,7 @@ from django.utils.text import slugify
 
 class Competition(models.Model):
     STATUS_CHOICES = [
+        ("draft", "Draft"),
         ("upcoming", "Upcoming"),
         ("registration_open", "Registration Open"),
         ("active", "Active"),
@@ -22,6 +25,19 @@ class Competition(models.Model):
     PARTICIPATION_TYPE_CHOICES = [
         ("team", "Team"),
         ("individual", "Individual"),
+        ("mixed", "Mixed"),
+    ]
+
+    ACCESS_MODE_CHOICES = [
+        ("open", "Open registration"),
+        ("application", "Application review"),
+        ("invite_only", "Invite only"),
+    ]
+
+    VISIBILITY_MODE_CHOICES = [
+        ("public", "Public catalog"),
+        ("unlisted", "Unlisted link"),
+        ("private", "Private"),
     ]
 
     INDUSTRY_CHOICES = [
@@ -36,6 +52,16 @@ class Competition(models.Model):
         ("intermediate", "Intermediate"),
         ("advanced", "Advanced"),
         ("mixed", "Mixed"),
+    ]
+
+    LANGUAGE_CHOICES = [
+        ("uk", "Ukrainian"),
+        ("en", "English"),
+        ("pl", "Polish"),
+        ("de", "German"),
+        ("fr", "French"),
+        ("es", "Spanish"),
+        ("other", "Other"),
     ]
 
     name = models.CharField(max_length=255)
@@ -55,6 +81,7 @@ class Competition(models.Model):
     )
     industry = models.CharField(max_length=32, choices=INDUSTRY_CHOICES, db_index=True)
     difficulty = models.CharField(max_length=32, choices=DIFFICULTY_CHOICES, db_index=True)
+    language = models.CharField(max_length=16, choices=LANGUAGE_CHOICES, default="uk", db_index=True)
 
     current_round = models.PositiveIntegerField(default=1)
     total_rounds = models.PositiveIntegerField(default=1)
@@ -70,10 +97,30 @@ class Competition(models.Model):
     submissions_open = models.BooleanField(default=False)
     is_public = models.BooleanField(default=True)
 
+    access_mode = models.CharField(max_length=32, choices=ACCESS_MODE_CHOICES, default="application", db_index=True)
+    visibility_mode = models.CharField(max_length=32, choices=VISIBILITY_MODE_CHOICES, default="public", db_index=True)
+    show_in_catalog = models.BooleanField(default=True)
+    allow_sharing_link = models.BooleanField(default=True)
+    allow_external_registration = models.BooleanField(default=True)
+
+    min_team_size = models.PositiveIntegerField(default=1)
+    max_team_size = models.PositiveIntegerField(default=4)
+    allow_user_team_invites = models.BooleanField(default=True)
+    allow_organizer_team_assignment = models.BooleanField(default=True)
+
+    setup_step = models.PositiveSmallIntegerField(default=1)
+    completion_percent = models.PositiveSmallIntegerField(default=0)
+    publish_ready = models.BooleanField(default=False)
+
     trending_score = models.FloatField(default=0)
 
+    registration_starts_at = models.DateTimeField(null=True, blank=True)
+    registration_ends_at = models.DateTimeField(null=True, blank=True)
     starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
+    judging_starts_at = models.DateTimeField(null=True, blank=True)
+    judging_ends_at = models.DateTimeField(null=True, blank=True)
+    results_public_at = models.DateTimeField(null=True, blank=True)
     timer_deadline = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -84,7 +131,15 @@ class Competition(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.name)
+            base_slug = slugify(self.name) or "competition"
+            if self.status == "draft" and base_slug == "untitled-competition":
+                base_slug = f"untitled-competition-{uuid.uuid4().hex[:8]}"
+            slug = base_slug
+            counter = 2
+            while Competition.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+            self.slug = slug
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -135,6 +190,192 @@ class UserCompetitionWatch(models.Model):
         return f"{self.user} watches {self.competition}"
 
 
+class CompetitionRound(models.Model):
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="rounds",
+    )
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    submission_required = models.BooleanField(default=True)
+    max_attempts = models.PositiveIntegerField(default=1)
+    is_stream_enabled = models.BooleanField(default=False)
+    stream_url = models.URLField(blank=True)
+    stream_embed_url = models.URLField(blank=True)
+    stream_label = models.CharField(max_length=120, blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return f"{self.competition.name}: {self.title}"
+
+
+class CompetitionSubmissionSettings(models.Model):
+    SUBMISSION_MODE_CHOICES = [
+        ("file_upload", "File upload"),
+        ("text_answer", "Text answer"),
+        ("repository_link", "Repository link"),
+        ("demo_link", "Demo link"),
+        ("mixed", "Mixed"),
+    ]
+
+    competition = models.OneToOneField(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="submission_settings",
+    )
+    submission_mode = models.CharField(max_length=32, choices=SUBMISSION_MODE_CHOICES, default="mixed")
+    allowed_file_types = models.JSONField(default=list, blank=True)
+    max_file_size_mb = models.PositiveIntegerField(default=25)
+    max_submissions = models.PositiveIntegerField(default=1)
+    repository_url_required = models.BooleanField(default=False)
+    demo_url_required = models.BooleanField(default=False)
+    description_required = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"Submission settings for {self.competition.name}"
+
+
+class CompetitionJudgingCriterion(models.Model):
+    JUDGING_MODE_CHOICES = [
+        ("manual", "Manual judging"),
+        ("automatic", "Automatic judging"),
+        ("mixed", "Mixed judging"),
+        ("public_voting", "Public voting"),
+    ]
+
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="judging_criteria",
+    )
+    judging_mode = models.CharField(max_length=32, choices=JUDGING_MODE_CHOICES, default="manual")
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    max_score = models.PositiveIntegerField(default=10)
+    weight = models.FloatField(default=1.0)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return f"{self.competition.name}: {self.title}"
+
+
+class CompetitionAward(models.Model):
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="awards",
+    )
+    title = models.CharField(max_length=255)
+    place = models.PositiveIntegerField(null=True, blank=True)
+    issue_certificate = models.BooleanField(default=True)
+    issue_badge = models.BooleanField(default=True)
+    description = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["place", "id"]
+
+    def __str__(self):
+        return f"{self.competition.name}: {self.title}"
+
+
+class CompetitionInvitation(models.Model):
+    TARGET_TYPE_CHOICES = [
+        ("individual", "Individual participant"),
+        ("team", "Team"),
+    ]
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("queued", "Queued"),
+        ("sent", "Sent"),
+        ("accepted", "Accepted"),
+        ("declined", "Declined"),
+        ("expired", "Expired"),
+    ]
+
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="invitations",
+    )
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sent_competition_invitations",
+    )
+    email = models.EmailField()
+    target_type = models.CharField(max_length=32, choices=TARGET_TYPE_CHOICES, default="individual")
+    team_name = models.CharField(max_length=255, blank=True)
+    token = models.CharField(max_length=128, unique=True)
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="draft", db_index=True)
+    message = models.TextField(blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        unique_together = ("competition", "email", "target_type", "team_name")
+
+    def __str__(self):
+        return f"Invitation to {self.email} for {self.competition.name}"
+
+
+class OutboundMessage(models.Model):
+    CHANNEL_CHOICES = [
+        ("email", "Email"),
+        ("platform", "Platform notification"),
+    ]
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("queued", "Queued"),
+        ("sent", "Sent"),
+        ("failed", "Failed"),
+    ]
+
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="outbound_messages",
+        null=True,
+        blank=True,
+    )
+    invitation = models.ForeignKey(
+        CompetitionInvitation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="messages",
+    )
+    recipient_email = models.EmailField()
+    channel = models.CharField(max_length=32, choices=CHANNEL_CHOICES, default="email")
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="draft", db_index=True)
+    provider_message_id = models.CharField(max_length=255, blank=True)
+    error_message = models.TextField(blank=True)
+    queued_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.recipient_email}: {self.subject}"
+
+
 class CompetitionMaterial(models.Model):
     MATERIAL_TYPE_CHOICES = [
         ("rules", "Rules"),
@@ -164,6 +405,28 @@ class CompetitionMaterial(models.Model):
 
     def __str__(self):
         return f"{self.competition.name}: {self.name}"
+
+
+class RecentlyViewedMaterial(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="recently_viewed_materials",
+    )
+    material = models.ForeignKey(
+        CompetitionMaterial,
+        on_delete=models.CASCADE,
+        related_name="recent_views",
+    )
+    viewed_at = models.DateTimeField(auto_now=True)
+    view_count = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        unique_together = ("user", "material")
+        ordering = ["-viewed_at"]
+
+    def __str__(self):
+        return f"{self.user} viewed {self.material}"
 
 
 class CompetitionPlannedEvent(models.Model):
@@ -247,13 +510,54 @@ class CompetitionAnnouncementComment(models.Model):
         return f"Comment by {self.author} on {self.announcement_id}"
 
 
+class CompetitionTeam(models.Model):
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("pending", "Pending review"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+        ("archived", "Archived"),
+    ]
+
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="teams",
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="pending", db_index=True)
+    captain = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="captained_competition_teams",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("competition", "name")
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} / {self.competition.name}"
+
+
 class CompetitionParticipant(models.Model):
     ROLE_CHOICES = [
         ("participant", "Participant"),
-        ("team", "Team"),
-        ("observer", "Observer"),
+        ("team_member", "Team member"),
         ("judge", "Judge"),
         ("organizer", "Organizer"),
+    ]
+
+    STATUS_CHOICES = [
+        ("pending", "Pending review"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+        ("withdrawn", "Withdrawn"),
     ]
 
     competition = models.ForeignKey(
@@ -268,13 +572,22 @@ class CompetitionParticipant(models.Model):
         blank=True,
         related_name="competition_memberships",
     )
+    team = models.ForeignKey(
+        CompetitionTeam,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="members",
+    )
     display_name = models.CharField(max_length=255)
     role = models.CharField(max_length=32, choices=ROLE_CHOICES, default="participant")
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="pending", db_index=True)
     is_active_now = models.BooleanField(default=False)
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["display_name"]
+        unique_together = ("competition", "user")
 
     def __str__(self):
         return f"{self.display_name} ({self.role})"
@@ -289,8 +602,7 @@ class CompetitionJoinRequest(models.Model):
 
     ROLE_CHOICES = [
         ("participant", "Participant"),
-        ("team", "Team"),
-        ("observer", "Observer"),
+        ("team_member", "Team member"),
     ]
 
     competition = models.ForeignKey(
@@ -304,7 +616,24 @@ class CompetitionJoinRequest(models.Model):
         related_name="competition_join_requests",
     )
     role = models.CharField(max_length=32, choices=ROLE_CHOICES)
-    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="approved")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending")
+    team = models.ForeignKey(
+        CompetitionTeam,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="join_requests",
+    )
+    team_name = models.CharField(max_length=255, blank=True)
+    message = models.TextField(blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_competition_join_requests",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -381,3 +710,193 @@ class CompetitionJudgingMetric(models.Model):
 
     def __str__(self):
         return f"{self.competition.name}: {self.label}={self.value}"
+
+class UserProfile(models.Model):
+    ROLE_CHOICES = [
+        ("admin", "Administrator"),
+        ("organizer", "Organizer"),
+        ("participant", "Participant"),
+        ("viewer", "Viewer"),
+    ]
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="profile",
+    )
+    display_name = models.CharField(max_length=255, blank=True)
+    primary_role = models.CharField(max_length=32, choices=ROLE_CHOICES, default="participant")
+    bio = models.TextField(blank=True)
+    organization = models.CharField(max_length=255, blank=True)
+    position = models.CharField(max_length=255, blank=True)
+    phone = models.CharField(max_length=64, blank=True)
+    country = models.CharField(max_length=128, blank=True)
+    city = models.CharField(max_length=128, blank=True)
+    skills = models.JSONField(default=list, blank=True)
+    interests = models.JSONField(default=list, blank=True)
+    links = models.JSONField(default=dict, blank=True)
+    avatar_file = models.ForeignKey(
+        "UserFile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="avatar_profiles",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.display_name or self.user.get_username()
+
+
+class UserFile(models.Model):
+    FILE_TYPE_CHOICES = [
+        ("avatar", "Avatar"),
+        ("certificate", "Certificate"),
+        ("badge_icon", "Badge icon"),
+        ("resource", "Resource"),
+        ("submission", "Submission"),
+        ("competition_cover", "Competition cover"),
+        ("competition_attachment", "Competition attachment"),
+        ("other", "Other"),
+    ]
+    VISIBILITY_CHOICES = [
+        ("private", "Private"),
+        ("public", "Public"),
+        ("competition_only", "Competition only"),
+    ]
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="files",
+    )
+    storage_key = models.CharField(max_length=512, unique=True)
+    original_name = models.CharField(max_length=255)
+    mime_type = models.CharField(max_length=128, blank=True)
+    size_bytes = models.PositiveBigIntegerField(default=0)
+    checksum = models.CharField(max_length=128, blank=True)
+    file_type = models.CharField(max_length=32, choices=FILE_TYPE_CHOICES, default="other")
+    visibility = models.CharField(max_length=32, choices=VISIBILITY_CHOICES, default="private")
+    public_url = models.URLField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.original_name
+
+
+class RecentlyViewedCompetition(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="recent_competition_views",
+    )
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name="recent_views",
+    )
+    viewed_at = models.DateTimeField(auto_now=True)
+    view_count = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        unique_together = ("user", "competition")
+        ordering = ["-viewed_at"]
+
+    def __str__(self):
+        return f"{self.user} viewed {self.competition}"
+
+
+class Badge(models.Model):
+    code = models.SlugField(unique=True)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    badge_type = models.CharField(max_length=64, blank=True)
+    icon_file = models.ForeignKey(
+        UserFile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="badge_icons",
+    )
+
+    def __str__(self):
+        return self.title
+
+
+class UserBadge(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="badges",
+    )
+    badge = models.ForeignKey(Badge, on_delete=models.CASCADE, related_name="awards")
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="awarded_badges",
+    )
+    awarded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-awarded_at"]
+
+
+class Certificate(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="certificates",
+    )
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="certificates",
+    )
+    file = models.ForeignKey(UserFile, on_delete=models.CASCADE, related_name="certificates")
+    title = models.CharField(max_length=255)
+    issued_at = models.DateTimeField(null=True, blank=True)
+    verification_code = models.CharField(max_length=128, unique=True)
+
+    class Meta:
+        ordering = ["-issued_at", "-id"]
+
+    def __str__(self):
+        return self.title
+
+
+class UserMaterial(models.Model):
+    MATERIAL_TYPE_CHOICES = [
+        ("certificate", "Certificate"),
+        ("resource", "Resource"),
+        ("submission", "Submission"),
+        ("note", "Note"),
+        ("feedback", "Feedback"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="materials",
+    )
+    file = models.ForeignKey(UserFile, on_delete=models.CASCADE, related_name="materials")
+    title = models.CharField(max_length=255)
+    material_type = models.CharField(max_length=32, choices=MATERIAL_TYPE_CHOICES, default="resource")
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="user_materials",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]

@@ -1,10 +1,12 @@
 import React from 'react';
 
 const tabs = [
+  { key: 'active', label: 'Active competitions' },
   { key: 'trending', label: 'Trending' },
   { key: 'new', label: 'New' },
   { key: 'open_submission', label: 'Open Submission' },
   { key: 'live_stream', label: 'Live Stream' },
+  { key: 'completed', label: 'Finished & archived' },
 ];
 
 export default function CompetitionTabs({ activeTab, onChange }) {

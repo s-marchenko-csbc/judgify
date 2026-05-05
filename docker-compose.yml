@@ -13,7 +13,7 @@ services:
 
   backend:
     build: ./backend
-    command: bash -lc "python manage.py makemigrations landing && python manage.py migrate && python manage.py seed_landing && python manage.py shell -c \"from django.contrib.auth import get_user_model; U=get_user_model(); U.objects.filter(username='admin').exists() or U.objects.create_superuser('admin','admin@example.com','admin12345')\" && python manage.py runserver 0.0.0.0:8000"
+    command: bash -lc "python manage.py migrate && python manage.py seed_landing && python manage.py shell -c \"from django.contrib.auth import get_user_model; U=get_user_model(); U.objects.filter(username='admin').exists() or U.objects.create_superuser('admin','admin@example.com','admin12345')\" && python manage.py runserver 0.0.0.0:8000"
     volumes:
       - ./backend:/app
     ports:

@@ -29,6 +29,7 @@ export default function FiltersSidebar({ filterOptions, filters, onToggleFilter,
       <FilterGroup title="Type of participation:" items={filterOptions.participation_type} selected={filters.participation_type} onChange={onToggleFilter} name="participation_type" />
       <FilterGroup title="Industry:" items={filterOptions.industry} selected={filters.industry} onChange={onToggleFilter} name="industry" />
       <FilterGroup title="Difficulty:" items={filterOptions.difficulty} selected={filters.difficulty} onChange={onToggleFilter} name="difficulty" />
+      <FilterGroup title="Language:" items={filterOptions.language || []} selected={filters.language || []} onChange={onToggleFilter} name="language" />
       <button className="reset-btn" onClick={onReset}>Reset Filters</button>
     </aside>
   );

@@ -1,59 +1,44 @@
 import React, { useState } from "react";
 
+const roleOptions = [
+  { id: "organizer", label: "Organizer", icon: "♛" },
+  { id: "participant", label: "Participant", icon: "☷" },
+  { id: "viewer", label: "Viewer", icon: "◉" },
+];
+
+const initialForm = {
+  username: "",
+  email: "",
+  password: "",
+  confirmPassword: "",
+  primaryRole: "participant",
+};
+
 export default function SignUpModal({
   isOpen,
   onClose,
   onOpenSignIn,
   onComplete,
 }) {
-  const [step, setStep] = useState("entry");
-  const [form, setForm] = useState({
-    email: "",
-    password: "",
-    confirmPassword: "",
-    displayName: "",
-    country: "",
-    agree: false,
-  });
+  const [form, setForm] = useState(initialForm);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   if (!isOpen) return null;
 
-  const stopPropagation = (e) => e.stopPropagation();
-
   const handleChange = (field, value) => {
-    setForm((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    setForm((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleClose = () => {
-    setStep("entry");
-    setForm({
-      email: "",
-      password: "",
-      confirmPassword: "",
-      displayName: "",
-      country: "",
-      agree: false,
-    });
-    onClose();
-  };
-
-  const handleBackToEntry = () => {
-    setStep("entry");
+    setForm(initialForm);
+    onClose?.();
   };
 
   const handleCreateAccount = (e) => {
     e.preventDefault();
 
-    if (
-      !form.email ||
-      !form.password ||
-      !form.confirmPassword ||
-      !form.displayName ||
-      !form.country
-    ) {
+    if (!form.username || !form.email || !form.password || !form.confirmPassword) {
       alert("Please fill in all required fields.");
       return;
     }
@@ -63,188 +48,120 @@ export default function SignUpModal({
       return;
     }
 
-    if (!form.agree) {
-      alert("You need to accept Terms & Privacy.");
-      return;
-    }
+    onComplete?.({
+      username: form.username,
+      email: form.email,
+      displayName: form.username,
+      primaryRole: form.primaryRole,
+    });
+  };
 
-    onComplete?.();
+  const switchToSignIn = () => {
+    setForm(initialForm);
+    onOpenSignIn?.();
   };
 
   return (
-    <div className="auth-modal-overlay" onClick={handleClose}>
-      <div className="auth-modal signup-modal" onClick={stopPropagation}>
-        <button
-          className="auth-modal-close"
-          onClick={handleClose}
-          aria-label="Close"
-        >
+    <div className="auth-modal-overlay signup-screen" onClick={handleClose}>
+      <div className="auth-modal signup-panel" onClick={(e) => e.stopPropagation()}>
+        <button className="auth-modal-close" onClick={handleClose} aria-label="Close">
           ×
         </button>
 
-        {step === "entry" && (
-          <>
-            <div className="auth-modal-logo">Judgify</div>
-            <div className="auth-modal-subtitle">Compete. Judge. Organize.</div>
-            <div className="auth-modal-caption">Get started instantly</div>
+        <h2 className="signup-title">Sign Up</h2>
 
-            <div className="social-auth-list">
-              <button className="social-auth-btn" type="button">
-                <span className="social-auth-icon google">G</span>
-                <span>Continue with Google</span>
-              </button>
+        <form className="signup-form" onSubmit={handleCreateAccount}>
+          <div className="signup-field">
+            <label>Username</label>
+            <input
+              type="text"
+              value={form.username}
+              onChange={(e) => handleChange("username", e.target.value)}
+              placeholder="Enter your username"
+            />
+          </div>
 
-              <button className="social-auth-btn" type="button">
-                <span className="social-auth-icon github">◉</span>
-                <span>Continue with GitHub</span>
-              </button>
+          <div className="signup-field">
+            <label>Email address</label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => handleChange("email", e.target.value)}
+              placeholder="Enter your email address"
+            />
+          </div>
 
-              <button className="social-auth-btn" type="button">
-                <span className="social-auth-icon linkedin">in</span>
-                <span>Continue with LinkedIn</span>
-              </button>
-
-              <button className="social-auth-btn" type="button">
-                <span className="social-auth-icon facebook">f</span>
-                <span>Continue with Facebook</span>
-              </button>
-            </div>
-
-            <div className="auth-divider">
-              <span>OR</span>
-            </div>
-
-            <button
-              className="continue-email-btn"
-              type="button"
-              onClick={() => setStep("email")}
-            >
-              Continue with email →
-            </button>
-
-            <div className="auth-bottom-link">
-              Already have an account?{" "}
+          <div className="signup-field">
+            <label>Password</label>
+            <div className="password-input-wrap">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={form.password}
+                onChange={(e) => handleChange("password", e.target.value)}
+                placeholder="Create your password"
+              />
               <button
                 type="button"
-                className="auth-link-btn"
-                onClick={onOpenSignIn}
+                className="password-eye-btn"
+                onClick={() => setShowPassword((value) => !value)}
+                aria-label="Toggle password visibility"
               >
-                Log in
+                {showPassword ? "◉" : "◌"}
               </button>
             </div>
-          </>
-        )}
+          </div>
 
-        {step === "email" && (
-          <>
-            <div className="auth-modal-logo">Judgify</div>
-
-            <div className="email-signup-card">
-              <div className="email-signup-title">
-                Create your Judgify account
-              </div>
-
-              <form className="email-signup-form" onSubmit={handleCreateAccount}>
-                <div className="form-field">
-                  <label>Email</label>
-                  <input
-                    type="email"
-                    value={form.email}
-                    onChange={(e) => handleChange("email", e.target.value)}
-                    placeholder="Email"
-                  />
-                </div>
-
-                <div className="form-field">
-                  <label>Password</label>
-                  <input
-                    type="password"
-                    value={form.password}
-                    onChange={(e) => handleChange("password", e.target.value)}
-                    placeholder="Password"
-                  />
-                </div>
-
-                <div className="form-field">
-                  <label>Confirm password</label>
-                  <input
-                    type="password"
-                    value={form.confirmPassword}
-                    onChange={(e) =>
-                      handleChange("confirmPassword", e.target.value)
-                    }
-                    placeholder="Confirm password"
-                  />
-                </div>
-
-                <div className="form-field">
-                  <label>Display name</label>
-                  <input
-                    type="text"
-                    value={form.displayName}
-                    onChange={(e) =>
-                      handleChange("displayName", e.target.value)
-                    }
-                    placeholder="Display name"
-                  />
-                </div>
-
-                <div className="form-field">
-                  <label>Country</label>
-                  <select
-                    value={form.country}
-                    onChange={(e) => handleChange("country", e.target.value)}
-                  >
-                    <option value="">Select country</option>
-                    <option value="Ukraine">Ukraine</option>
-                    <option value="Poland">Poland</option>
-                    <option value="Germany">Germany</option>
-                    <option value="Latvia">Latvia</option>
-                    <option value="USA">USA</option>
-                  </select>
-                </div>
-
-                <label className="terms-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={form.agree}
-                    onChange={(e) => handleChange("agree", e.target.checked)}
-                  />
-                  <span>
-                    I agree to{" "}
-                    <button
-                      type="button"
-                      className="auth-link-btn inline-link"
-                    >
-                      Terms
-                    </button>{" "}
-                    &{" "}
-                    <button
-                      type="button"
-                      className="auth-link-btn inline-link"
-                    >
-                      Privacy
-                    </button>
-                  </span>
-                </label>
-
-                <button type="submit" className="create-account-btn">
-                  Create account
-                </button>
-              </form>
-
-              <div className="email-signup-footer">
-                <button
-                  type="button"
-                  className="back-btn"
-                  onClick={handleBackToEntry}
-                >
-                  ← Back
-                </button>
-              </div>
+          <div className="signup-field">
+            <label>Confirm your password</label>
+            <div className="password-input-wrap">
+              <input
+                type={showConfirmPassword ? "text" : "password"}
+                value={form.confirmPassword}
+                onChange={(e) => handleChange("confirmPassword", e.target.value)}
+                placeholder="Confirm your password"
+              />
+              <button
+                type="button"
+                className="password-eye-btn"
+                onClick={() => setShowConfirmPassword((value) => !value)}
+                aria-label="Toggle password visibility"
+              >
+                {showConfirmPassword ? "◉" : "◌"}
+              </button>
             </div>
-          </>
-        )}
+          </div>
+
+          <div className="signup-role-block">
+            <div className="signup-role-label">I want to join as:</div>
+            <div className="signup-role-list" role="radiogroup" aria-label="Choose account role">
+              {roleOptions.map((role) => (
+                <button
+                  key={role.id}
+                  type="button"
+                  className={`signup-role-card ${form.primaryRole === role.id ? "active" : ""}`}
+                  onClick={() => handleChange("primaryRole", role.id)}
+                  role="radio"
+                  aria-checked={form.primaryRole === role.id}
+                >
+                  <span className="signup-role-icon">{role.icon}</span>
+                  <span className="signup-role-name">{role.label}</span>
+                  <span className="signup-role-radio" />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button type="submit" className="signup-submit-btn">
+            Sign Up
+          </button>
+        </form>
+
+        <div className="signup-bottom-link">
+          Already have an account?{" "}
+          <button type="button" className="auth-link-btn" onClick={switchToSignIn}>
+            Log In
+          </button>
+        </div>
       </div>
     </div>
   );

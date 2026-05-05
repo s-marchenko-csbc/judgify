@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import (
@@ -8,12 +9,232 @@ from .models import (
     CompetitionPlannedEvent,
     CompetitionAnnouncement,
     CompetitionAnnouncementComment,
+    CompetitionTeam,
     CompetitionParticipant,
     CompetitionJoinRequest,
+    CompetitionRound,
+    CompetitionSubmissionSettings,
+    CompetitionJudgingCriterion,
+    CompetitionAward,
+    CompetitionInvitation,
+    OutboundMessage,
     CompetitionRoundResult,
     CompetitionLeaderboardEntry,
     CompetitionJudgingMetric,
+    UserProfile,
+    UserFile,
+    RecentlyViewedCompetition,
+    RecentlyViewedMaterial,
+    Badge,
+    UserBadge,
+    Certificate,
+    UserMaterial,
 )
+
+
+class CompetitionRoundSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompetitionRound
+        fields = [
+            "id", "title", "description", "starts_at", "ends_at",
+            "submission_required", "max_attempts",
+            "is_stream_enabled", "stream_url", "stream_embed_url", "stream_label",
+            "sort_order",
+        ]
+
+
+class CompetitionSubmissionSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompetitionSubmissionSettings
+        fields = [
+            "submission_mode", "allowed_file_types", "max_file_size_mb",
+            "max_submissions", "repository_url_required", "demo_url_required",
+            "description_required",
+        ]
+
+
+class CompetitionJudgingCriterionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompetitionJudgingCriterion
+        fields = [
+            "id", "judging_mode", "title", "description",
+            "max_score", "weight", "sort_order",
+        ]
+
+
+class CompetitionAwardSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompetitionAward
+        fields = ["id", "title", "place", "issue_certificate", "issue_badge", "description"]
+
+
+class CompetitionInvitationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompetitionInvitation
+        fields = [
+            "id", "email", "target_type", "team_name", "status",
+            "message", "expires_at", "sent_at", "responded_at", "created_at",
+        ]
+        read_only_fields = ["id", "status", "sent_at", "responded_at", "created_at"]
+
+
+class OutboundMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OutboundMessage
+        fields = [
+            "id", "recipient_email", "channel", "subject", "body",
+            "status", "error_message", "queued_at", "sent_at", "created_at",
+        ]
+        read_only_fields = ["id", "status", "error_message", "queued_at", "sent_at", "created_at"]
+
+
+class CompetitionBuilderSerializer(serializers.ModelSerializer):
+    rounds = CompetitionRoundSerializer(many=True, required=False)
+    submission_settings = CompetitionSubmissionSettingsSerializer(required=False)
+    judging_criteria = CompetitionJudgingCriterionSerializer(many=True, required=False)
+    awards = CompetitionAwardSerializer(many=True, required=False)
+    invitations = CompetitionInvitationSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Competition
+        fields = [
+            "id", "slug", "name", "short_description", "full_description",
+            "cover_image", "banner_image", "status", "event_type",
+            "participation_type", "industry", "difficulty", "language",
+            "access_mode", "visibility_mode", "show_in_catalog",
+            "allow_sharing_link", "allow_external_registration",
+            "min_team_size", "max_team_size", "allow_user_team_invites",
+            "allow_organizer_team_assignment", "registration_open",
+            "submissions_open", "is_public", "setup_step",
+            "completion_percent", "publish_ready",
+            "registration_starts_at", "registration_ends_at",
+            "starts_at", "ends_at", "judging_starts_at",
+            "judging_ends_at", "results_public_at", "timer_deadline",
+            "current_round", "total_rounds", "rounds",
+            "submission_settings", "judging_criteria", "awards", "invitations",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "slug", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        data = {**getattr(self.instance, "__dict__", {}), **attrs}
+        created_at = getattr(self.instance, "created_at", None) or timezone.now()
+
+        starts_at = data.get("starts_at")
+        ends_at = data.get("ends_at")
+        registration_starts_at = data.get("registration_starts_at")
+        registration_ends_at = data.get("registration_ends_at")
+        judging_starts_at = data.get("judging_starts_at")
+        judging_ends_at = data.get("judging_ends_at")
+        results_public_at = data.get("results_public_at")
+
+        errors = {}
+
+        if starts_at and starts_at < created_at:
+            errors["starts_at"] = "Competition cannot start before it is created."
+        if ends_at and ends_at < created_at:
+            errors["ends_at"] = "Competition cannot end before it is created."
+        if starts_at and ends_at and ends_at <= starts_at:
+            errors["ends_at"] = "Competition end must be later than competition start."
+
+        if registration_starts_at and starts_at and registration_starts_at > starts_at:
+            errors["registration_starts_at"] = "Registration cannot start after the competition starts."
+        if registration_ends_at and starts_at and registration_ends_at > starts_at:
+            errors["registration_ends_at"] = "Registration must end no later than the competition start."
+        if registration_starts_at and registration_ends_at and registration_ends_at <= registration_starts_at:
+            errors["registration_ends_at"] = "Registration end must be later than registration start."
+
+        if judging_starts_at and ends_at and judging_starts_at < ends_at:
+            errors["judging_starts_at"] = "Judging cannot start before the competition ends."
+        if judging_starts_at and judging_ends_at and judging_ends_at <= judging_starts_at:
+            errors["judging_ends_at"] = "Judging end must be later than judging start."
+        if results_public_at and judging_ends_at and results_public_at < judging_ends_at:
+            errors["results_public_at"] = "Results cannot be published before judging ends."
+
+        rounds = attrs.get("rounds", None)
+        if rounds is not None and starts_at and ends_at:
+            round_errors = []
+            previous_end = None
+            for index, round_data in enumerate(rounds):
+                item_errors = {}
+                round_start = round_data.get("starts_at")
+                round_end = round_data.get("ends_at")
+                if round_start and round_start < starts_at:
+                    item_errors["starts_at"] = "Round must start within the competition window."
+                if round_end and round_end > ends_at:
+                    item_errors["ends_at"] = "Round must end within the competition window."
+                if round_start and round_end and round_end <= round_start:
+                    item_errors["ends_at"] = "Round end must be later than round start."
+                if previous_end and round_start and round_start < previous_end:
+                    item_errors["starts_at"] = "Next round cannot start before the previous round ends."
+                if round_end:
+                    previous_end = round_end
+                if item_errors:
+                    round_errors.append({"index": index, **item_errors})
+            if round_errors:
+                errors["rounds"] = round_errors
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+    def create(self, validated_data):
+        nested = self._pop_nested(validated_data)
+        competition = Competition.objects.create(**validated_data)
+        self._sync_nested(competition, nested)
+        return competition
+
+    def update(self, instance, validated_data):
+        nested = self._pop_nested(validated_data)
+        for key, value in validated_data.items():
+            setattr(instance, key, value)
+        instance.is_public = instance.visibility_mode == "public"
+        instance.show_in_catalog = instance.visibility_mode == "public" and instance.show_in_catalog
+        instance.save()
+        self._sync_nested(instance, nested)
+        return instance
+
+    def _pop_nested(self, data):
+        return {
+            "rounds": data.pop("rounds", None),
+            "submission_settings": data.pop("submission_settings", None),
+            "judging_criteria": data.pop("judging_criteria", None),
+            "awards": data.pop("awards", None),
+        }
+
+    def _sync_nested(self, competition, nested):
+        if nested.get("rounds") is not None:
+            competition.rounds.all().delete()
+            for index, item in enumerate(nested["rounds"]):
+                item.setdefault("sort_order", index)
+                CompetitionRound.objects.create(competition=competition, **item)
+
+            rounds = list(competition.rounds.all())
+            competition.total_rounds = max(1, len(rounds))
+
+            dated_starts = [round_obj.starts_at for round_obj in rounds if round_obj.starts_at]
+            dated_ends = [round_obj.ends_at for round_obj in rounds if round_obj.ends_at]
+            if dated_starts and not competition.starts_at:
+                competition.starts_at = min(dated_starts)
+            if dated_ends and not competition.ends_at:
+                competition.ends_at = max(dated_ends)
+            competition.save(update_fields=["total_rounds", "starts_at", "ends_at", "updated_at"])
+
+        if nested.get("submission_settings") is not None:
+            CompetitionSubmissionSettings.objects.update_or_create(
+                competition=competition, defaults=nested["submission_settings"]
+            )
+
+        if nested.get("judging_criteria") is not None:
+            competition.judging_criteria.all().delete()
+            for index, item in enumerate(nested["judging_criteria"]):
+                item.setdefault("sort_order", index)
+                CompetitionJudgingCriterion.objects.create(competition=competition, **item)
+
+        if nested.get("awards") is not None:
+            competition.awards.all().delete()
+            for item in nested["awards"]:
+                CompetitionAward.objects.create(competition=competition, **item)
 
 
 class CompetitionMaterialSerializer(serializers.ModelSerializer):
@@ -21,12 +242,26 @@ class CompetitionMaterialSerializer(serializers.ModelSerializer):
         model = CompetitionMaterial
         fields = [
             "id",
+            "competition",
             "name",
             "material_type",
             "url",
             "sort_order",
             "created_at",
         ]
+
+
+
+
+class RecentlyViewedMaterialSerializer(serializers.ModelSerializer):
+    material = CompetitionMaterialSerializer(read_only=True)
+    competition_id = serializers.IntegerField(source="material.competition_id", read_only=True)
+    competition_name = serializers.CharField(source="material.competition.name", read_only=True)
+
+    class Meta:
+        model = RecentlyViewedMaterial
+        fields = ["id", "material", "competition_id", "competition_name", "view_count", "viewed_at"]
+        read_only_fields = fields
 
 
 class CompetitionPlannedEventSerializer(serializers.ModelSerializer):
@@ -105,8 +340,49 @@ class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
         return "Organizer"
 
 
+class TeamMemberSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+    avatar = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CompetitionParticipant
+        fields = ["id", "user", "user_name", "display_name", "role", "status", "is_active_now", "avatar"]
+
+    def get_user_name(self, obj):
+        if obj.user:
+            full_name = obj.user.get_full_name()
+            return full_name or getattr(obj.user, "username", "") or getattr(obj.user, "email", "")
+        return obj.display_name
+
+    def get_avatar(self, obj):
+        profile = getattr(obj.user, "profile", None) if obj.user else None
+        if profile and profile.avatar_file:
+            return profile.avatar_file.public_url or ""
+        return ""
+
+
+class CompetitionTeamSerializer(serializers.ModelSerializer):
+    competition_name = serializers.CharField(source="competition.name", read_only=True)
+    captain_name = serializers.SerializerMethodField()
+    members = TeamMemberSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CompetitionTeam
+        fields = [
+            "id", "competition", "competition_name", "name", "description",
+            "status", "captain", "captain_name", "members", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "competition_name", "captain_name", "members", "created_at", "updated_at"]
+
+    def get_captain_name(self, obj):
+        if obj.captain:
+            return obj.captain.get_full_name() or obj.captain.get_username() or getattr(obj.captain, "email", "")
+        return ""
+
+
 class CompetitionParticipantSerializer(serializers.ModelSerializer):
     user_name = serializers.SerializerMethodField()
+    team_name = serializers.CharField(source="team.name", read_only=True)
 
     class Meta:
         model = CompetitionParticipant
@@ -117,12 +393,16 @@ class CompetitionParticipantSerializer(serializers.ModelSerializer):
             "user_name",
             "display_name",
             "role",
+            "status",
+            "team",
+            "team_name",
             "is_active_now",
             "joined_at",
         ]
         read_only_fields = [
             "id",
             "user_name",
+            "team_name",
             "joined_at",
         ]
 
@@ -137,6 +417,7 @@ class CompetitionParticipantSerializer(serializers.ModelSerializer):
 
 class CompetitionJoinRequestSerializer(serializers.ModelSerializer):
     user_name = serializers.SerializerMethodField()
+    team_name = serializers.CharField(read_only=True)
 
     class Meta:
         model = CompetitionJoinRequest
@@ -147,6 +428,9 @@ class CompetitionJoinRequestSerializer(serializers.ModelSerializer):
             "user_name",
             "role",
             "status",
+            "team",
+            "team_name",
+            "message",
             "created_at",
         ]
         read_only_fields = [
@@ -241,6 +525,8 @@ class UserCompetitionWatchSerializer(serializers.ModelSerializer):
 
 
 class SidebarCompetitionSerializer(serializers.ModelSerializer):
+    comments_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Competition
         fields = [
@@ -251,10 +537,15 @@ class SidebarCompetitionSerializer(serializers.ModelSerializer):
             "participants_count",
             "comments_count",
             "status",
+            "language",
         ]
+
+    def get_comments_count(self, obj):
+        return CompetitionAnnouncementComment.objects.filter(announcement__competition=obj).count()
 
 
 class CompetitionCardSerializer(serializers.ModelSerializer):
+    comments_count = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     event_type_label = serializers.CharField(source="get_event_type_display", read_only=True)
     participation_type_label = serializers.CharField(
@@ -263,9 +554,16 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
     )
     industry_label = serializers.CharField(source="get_industry_display", read_only=True)
     difficulty_label = serializers.CharField(source="get_difficulty_display", read_only=True)
+    language_label = serializers.CharField(source="get_language_display", read_only=True)
 
     is_saved = serializers.SerializerMethodField()
     is_watching = serializers.SerializerMethodField()
+    user_participation_status = serializers.SerializerMethodField()
+    user_participation_role = serializers.SerializerMethodField()
+    user_team = serializers.SerializerMethodField()
+    can_join = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    rounds = CompetitionRoundSerializer(many=True, read_only=True)
 
     class Meta:
         model = Competition
@@ -281,10 +579,19 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
             "event_type_label",
             "participation_type",
             "participation_type_label",
+            "access_mode",
+            "visibility_mode",
+            "show_in_catalog",
+            "allow_sharing_link",
+            "allow_external_registration",
+            "min_team_size",
+            "max_team_size",
             "industry",
             "industry_label",
             "difficulty",
             "difficulty_label",
+            "language",
+            "language_label",
             "current_round",
             "total_rounds",
             "participants_count",
@@ -296,11 +603,22 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
             "registration_open",
             "submissions_open",
             "trending_score",
+            "registration_starts_at",
+            "registration_ends_at",
             "starts_at",
             "ends_at",
+            "judging_starts_at",
+            "judging_ends_at",
+            "results_public_at",
             "timer_deadline",
+            "rounds",
             "is_saved",
             "is_watching",
+            "user_participation_status",
+            "user_participation_role",
+            "user_team",
+            "can_join",
+            "can_edit",
             "created_at",
             "updated_at",
         ]
@@ -312,6 +630,7 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
             "participation_type_label",
             "industry_label",
             "difficulty_label",
+            "language_label",
             "participants_count",
             "comments_count",
             "views_count",
@@ -319,9 +638,17 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
             "trending_score",
             "is_saved",
             "is_watching",
+            "user_participation_status",
+            "user_participation_role",
+            "user_team",
+            "can_join",
+            "can_edit",
             "created_at",
             "updated_at",
         ]
+
+    def get_comments_count(self, obj):
+        return CompetitionAnnouncementComment.objects.filter(announcement__competition=obj).count()
 
     def get_is_saved(self, obj):
         request = self.context.get("request")
@@ -343,6 +670,77 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
             competition=obj,
         ).exists()
 
+    def _membership(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return None
+        if not hasattr(obj, "_current_user_membership"):
+            obj._current_user_membership = CompetitionParticipant.objects.filter(
+                competition=obj, user=request.user
+            ).select_related("team").first()
+        return obj._current_user_membership
+
+    def _join_request(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return None
+        if not hasattr(obj, "_current_user_join_request"):
+            obj._current_user_join_request = CompetitionJoinRequest.objects.filter(
+                competition=obj, user=request.user
+            ).order_by("-created_at").select_related("team").first()
+        return obj._current_user_join_request
+
+    def get_user_participation_status(self, obj):
+        membership = self._membership(obj)
+        if membership:
+            return membership.status
+        join_request = self._join_request(obj)
+        if join_request:
+            return join_request.status
+        return "none"
+
+    def get_user_participation_role(self, obj):
+        membership = self._membership(obj)
+        if membership:
+            return membership.role
+        join_request = self._join_request(obj)
+        if join_request:
+            return join_request.role
+        return ""
+
+    def get_user_team(self, obj):
+        membership = self._membership(obj)
+        team = membership.team if membership else None
+        if not team:
+            join_request = self._join_request(obj)
+            team = join_request.team if join_request else None
+        if not team:
+            return None
+        return {"id": team.id, "name": team.name, "status": team.status}
+
+    def get_can_join(self, obj):
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            role = getattr(getattr(request.user, "profile", None), "primary_role", "")
+            if role != "participant" or request.user.is_staff:
+                return False
+        if obj.access_mode == "invite_only":
+            return False
+        if obj.status not in ["registration_open", "upcoming", "active"] or not obj.registration_open:
+            return False
+        return self.get_user_participation_status(obj) in ["none", "rejected", "withdrawn"]
+
+    def get_can_edit(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        role = getattr(getattr(request.user, "profile", None), "primary_role", "")
+        if request.user.is_staff or role == "admin":
+            return True
+        if role != "organizer":
+            return False
+        return CompetitionParticipant.objects.filter(competition=obj, user=request.user, role="organizer").exists()
+
 
 class CompetitionDetailSerializer(serializers.ModelSerializer):
     status_label = serializers.CharField(source="get_status_display", read_only=True)
@@ -353,10 +751,17 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
     )
     industry_label = serializers.CharField(source="get_industry_display", read_only=True)
     difficulty_label = serializers.CharField(source="get_difficulty_display", read_only=True)
+    language_label = serializers.CharField(source="get_language_display", read_only=True)
 
     is_saved = serializers.SerializerMethodField()
     is_watching = serializers.SerializerMethodField()
+    user_participation_status = serializers.SerializerMethodField()
+    user_participation_role = serializers.SerializerMethodField()
+    user_team = serializers.SerializerMethodField()
+    can_join = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
 
+    rounds = CompetitionRoundSerializer(many=True, read_only=True)
     materials = CompetitionMaterialSerializer(many=True, read_only=True)
     planned_events = CompetitionPlannedEventSerializer(many=True, read_only=True)
 
@@ -376,10 +781,19 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "event_type_label",
             "participation_type",
             "participation_type_label",
+            "access_mode",
+            "visibility_mode",
+            "show_in_catalog",
+            "allow_sharing_link",
+            "allow_external_registration",
+            "min_team_size",
+            "max_team_size",
             "industry",
             "industry_label",
             "difficulty",
             "difficulty_label",
+            "language",
+            "language_label",
             "current_round",
             "total_rounds",
             "participants_count",
@@ -392,13 +806,24 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "submissions_open",
             "is_public",
             "trending_score",
+            "registration_starts_at",
+            "registration_ends_at",
             "starts_at",
             "ends_at",
+            "judging_starts_at",
+            "judging_ends_at",
+            "results_public_at",
             "timer_deadline",
+            "rounds",
             "materials",
             "planned_events",
             "is_saved",
             "is_watching",
+            "user_participation_status",
+            "user_participation_role",
+            "user_team",
+            "can_join",
+            "can_edit",
             "created_at",
             "updated_at",
         ]
@@ -410,6 +835,7 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "participation_type_label",
             "industry_label",
             "difficulty_label",
+            "language_label",
             "participants_count",
             "comments_count",
             "views_count",
@@ -419,9 +845,17 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "planned_events",
             "is_saved",
             "is_watching",
+            "user_participation_status",
+            "user_participation_role",
+            "user_team",
+            "can_join",
+            "can_edit",
             "created_at",
             "updated_at",
         ]
+
+    def get_comments_count(self, obj):
+        return CompetitionAnnouncementComment.objects.filter(announcement__competition=obj).count()
 
     def get_is_saved(self, obj):
         request = self.context.get("request")
@@ -443,6 +877,69 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             competition=obj,
         ).exists()
 
+    def _membership(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return None
+        return CompetitionParticipant.objects.filter(competition=obj, user=request.user).select_related("team").first()
+
+    def _join_request(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return None
+        return CompetitionJoinRequest.objects.filter(competition=obj, user=request.user).order_by("-created_at").select_related("team").first()
+
+    def get_user_participation_status(self, obj):
+        membership = self._membership(obj)
+        if membership:
+            return membership.status
+        join_request = self._join_request(obj)
+        if join_request:
+            return join_request.status
+        return "none"
+
+    def get_user_participation_role(self, obj):
+        membership = self._membership(obj)
+        if membership:
+            return membership.role
+        join_request = self._join_request(obj)
+        if join_request:
+            return join_request.role
+        return ""
+
+    def get_user_team(self, obj):
+        membership = self._membership(obj)
+        team = membership.team if membership else None
+        if not team:
+            join_request = self._join_request(obj)
+            team = join_request.team if join_request else None
+        if not team:
+            return None
+        return {"id": team.id, "name": team.name, "status": team.status}
+
+    def get_can_join(self, obj):
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            role = getattr(getattr(request.user, "profile", None), "primary_role", "")
+            if role != "participant" or request.user.is_staff:
+                return False
+        if obj.access_mode == "invite_only":
+            return False
+        if obj.status not in ["registration_open", "upcoming", "active"] or not obj.registration_open:
+            return False
+        return self.get_user_participation_status(obj) in ["none", "rejected", "withdrawn"]
+
+    def get_can_edit(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        role = getattr(getattr(request.user, "profile", None), "primary_role", "")
+        if request.user.is_staff or role == "admin":
+            return True
+        if role != "organizer":
+            return False
+        return CompetitionParticipant.objects.filter(competition=obj, user=request.user, role="organizer").exists()
+
 
 class UserSavedCompetitionSerializer(serializers.ModelSerializer):
     competition = CompetitionCardSerializer(read_only=True)
@@ -459,3 +956,64 @@ class UserSavedCompetitionSerializer(serializers.ModelSerializer):
             "competition",
             "created_at",
         ]
+
+class UserFileSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserFile
+        fields = [
+            "id", "storage_key", "original_name", "mime_type", "size_bytes",
+            "file_type", "visibility", "url", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_url(self, obj):
+        return obj.public_url or ""
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    avatar = UserFileSerializer(source="avatar_file", read_only=True)
+    avatar_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserProfile
+        fields = [
+            "display_name", "primary_role", "bio", "organization", "position",
+            "phone", "country", "city", "skills", "interests", "links", "avatar", "avatar_url",
+        ]
+        read_only_fields = ["avatar", "avatar_url"]
+
+    def get_avatar_url(self, obj):
+        if obj.avatar_file and obj.avatar_file.public_url:
+            return obj.avatar_file.public_url
+        return (obj.links or {}).get("avatarDataUrl", "")
+
+
+class UserBadgeSerializer(serializers.ModelSerializer):
+    title = serializers.CharField(source="badge.title", read_only=True)
+    description = serializers.CharField(source="badge.description", read_only=True)
+    badge_type = serializers.CharField(source="badge.badge_type", read_only=True)
+    competition_name = serializers.CharField(source="competition.name", read_only=True)
+
+    class Meta:
+        model = UserBadge
+        fields = ["id", "title", "description", "badge_type", "competition", "competition_name", "awarded_at"]
+
+
+class CertificateSerializer(serializers.ModelSerializer):
+    file = UserFileSerializer(read_only=True)
+    competition_name = serializers.CharField(source="competition.name", read_only=True)
+
+    class Meta:
+        model = Certificate
+        fields = ["id", "title", "competition", "competition_name", "file", "issued_at", "verification_code"]
+
+
+class UserMaterialSerializer(serializers.ModelSerializer):
+    file = UserFileSerializer(read_only=True)
+    competition_name = serializers.CharField(source="competition.name", read_only=True)
+
+    class Meta:
+        model = UserMaterial
+        fields = ["id", "title", "material_type", "competition", "competition_name", "file", "created_at"]

@@ -1,4 +1,5 @@
 import React from "react";
+import { markMaterialViewed } from "../../api/landingApi";
 
 function getStatusLabel(status) {
   const map = {
@@ -55,6 +56,11 @@ export default function CompetitionSidebar({ competition }) {
             ✔ {competition.difficulty}
           </strong>
         </div>
+
+        <div className="competition-side-row">
+          <span>Language:</span>
+          <strong>{String(competition.language || "uk").toUpperCase()}</strong>
+        </div>
       </section>
 
       <section className="competition-side-block description">
@@ -75,11 +81,17 @@ export default function CompetitionSidebar({ competition }) {
           {(competition.materials || []).map((item) => (
             <a
               key={item.id}
-              href={item.url}
+              href={item.url || "#"}
               className="competition-download-item"
-              onClick={(e) => e.preventDefault()}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => {
+                if (Number.isInteger(Number(item.id))) {
+                  markMaterialViewed(item.id).catch(console.error);
+                }
+              }}
             >
-              <span>{item.icon}</span>
+              <span>{item.icon || "📎"}</span>
               <span>{item.name}</span>
               <span>›</span>
             </a>

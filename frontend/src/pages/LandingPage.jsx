@@ -1,6 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "../components/Header";
 import FiltersSidebar from "../components/FiltersSidebar";
 import CompetitionTabs from "../components/CompetitionTabs";
@@ -8,6 +6,7 @@ import CompetitionCard from "../components/CompetitionCard";
 import RightSidebar from "../components/RightSidebar";
 import SignUpModal from "../components/SignUpModal";
 import OnboardModal from "../components/auth/OnboardModal";
+import SignInModal from "../components/auth/SignInModal";
 
 import {
   fetchCompetitions,
@@ -19,31 +18,34 @@ import { useAuth } from "../context/AuthContext";
 
 const initialFilters = {
   search: "",
-  tab: "trending",
+  tab: "active",
   status: [],
   event_type: [],
   participation_type: [],
   industry: [],
   difficulty: [],
+  language: [],
 };
 
+function mergeSavedState(items, savedIds) {
+  return (items || []).map((item) => ({
+    ...item,
+    is_saved: savedIds.has(item.id) || Boolean(item.is_saved),
+  }));
+}
+
 export default function LandingPage() {
-  // const navigate = useNavigate();
   const { user, login, isAuthenticated } = useAuth();
 
   const [filters, setFilters] = useState(initialFilters);
   const [filterOptions, setFilterOptions] = useState(null);
   const [competitions, setCompetitions] = useState([]);
   const [sidebarData, setSidebarData] = useState(null);
+  const [savedIds, setSavedIds] = useState(() => new Set());
   const [loading, setLoading] = useState(false);
 
-  /**
-   * auth flow:
-   * null -> no modal
-   * "signup" -> first/second signup modal
-   * "onboard" -> onboarding modal
-   */
   const [authStep, setAuthStep] = useState(null);
+  const [pendingSignUpData, setPendingSignUpData] = useState(null);
 
   const requestFilters = useMemo(
     () => ({
@@ -54,37 +56,71 @@ export default function LandingPage() {
       participation_type: filters.participation_type,
       industry: filters.industry,
       difficulty: filters.difficulty,
+      language: filters.language,
     }),
     [filters]
   );
 
   useEffect(() => {
-    fetchLandingFilters()
-      .then(setFilterOptions)
-      .catch(console.error);
+    fetchLandingFilters().then(setFilterOptions).catch(console.error);
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
+  const refreshCompetitions = useCallback(async ({ showLoader = false } = {}) => {
+    if (showLoader) setLoading(true);
+    try {
+      const data = await fetchCompetitions(requestFilters);
+      setCompetitions((prev) => {
+        const localSaved = new Set(savedIds);
+        prev.forEach((item) => {
+          if (item.is_saved) localSaved.add(item.id);
+        });
+        return mergeSavedState(data, localSaved);
+      });
+    } catch (error) {
+      console.error(error);
+    } finally {
+      if (showLoader) setLoading(false);
+    }
+  }, [requestFilters, savedIds]);
 
-    fetchCompetitions(requestFilters)
-      .then(setCompetitions)
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [requestFilters]);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initialLoad() {
+      if (cancelled) return;
+      await refreshCompetitions({ showLoader: true });
+    }
+
+    initialLoad();
+    const intervalId = window.setInterval(() => {
+      if (!cancelled) refreshCompetitions({ showLoader: false });
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [refreshCompetitions]);
+
+  useEffect(() => {
+    setCompetitions((prev) => mergeSavedState(prev, savedIds));
+  }, [savedIds]);
 
   useEffect(() => {
     if (!isAuthenticated) {
       setSidebarData(null);
+      setSavedIds(new Set());
       return;
     }
 
     fetchSidebar()
       .then((data) => {
+        const savedList = (data?.saved_competitions || []).slice(0, 6);
         setSidebarData({
           ...data,
-          saved_competitions: (data?.saved_competitions || []).slice(0, 6),
+          saved_competitions: savedList,
         });
+        setSavedIds(new Set(savedList.map((item) => item.id)));
       })
       .catch(console.error);
   }, [isAuthenticated]);
@@ -115,58 +151,75 @@ export default function LandingPage() {
   };
 
   const handleOpenSignIn = () => {
-    alert("Sign In modal will be implemented next.");
+    setAuthStep("signin");
   };
 
-  const handleSignUpComplete = () => {
+  const handleSignUpComplete = (data) => {
+    setPendingSignUpData(data || null);
     setAuthStep("onboard");
   };
 
-  const handleFinishOnboarding = (data) => {
-    login({
-      id: 1,
-      displayName: "Stan",
-      interests: data?.interests || [],
-      createTeam: data?.createTeam || false,
-      isRegistered: true,
-    });
-
+  const handleSignInComplete = async (credentials) => {
+    await login(credentials);
     setAuthStep(null);
-    // navigate("/profile");
   };
 
-  const handleSavedChange = (competitionId, nextSaved) => {
-    let updatedCompetition = null;
+  const handleFinishOnboarding = async (data) => {
+    try {
+      await login({
+        ...(pendingSignUpData || {}),
+        interests: data?.interests || [],
+        createTeam: data?.createTeam || false,
+      });
+      setPendingSignUpData(null);
+      setAuthStep(null);
+    } catch (error) {
+      console.error("Failed to complete demo login", error);
+    }
+  };
+
+  const handleSavedChange = (competitionId, nextSaved, sourceItem = null) => {
+    const knownCompetition =
+      sourceItem || competitions.find((competition) => competition.id === competitionId);
+
+    setSavedIds((prev) => {
+      const next = new Set(prev);
+      if (nextSaved) next.add(competitionId);
+      else next.delete(competitionId);
+      return next;
+    });
 
     setCompetitions((prev) =>
-      prev.map((competition) => {
-        if (competition.id === competitionId) {
-          updatedCompetition = {
-            ...competition,
-            is_saved: nextSaved,
-          };
-          return updatedCompetition;
-        }
-        return competition;
-      })
+      prev.map((competition) =>
+        competition.id === competitionId
+          ? { ...competition, is_saved: nextSaved }
+          : competition
+      )
     );
 
-    if (!isAuthenticated || !updatedCompetition) return;
+    if (!isAuthenticated) return;
 
     setSidebarData((prev) => {
       if (!prev) {
         return {
+          recently_viewed: [],
+          recent_materials: [],
           last_competitions: [],
-          saved_competitions: nextSaved ? [updatedCompetition] : [],
+          saved_competitions: nextSaved && knownCompetition ? [knownCompetition] : [],
         };
       }
 
       const currentSaved = prev.saved_competitions || [];
-      let nextSavedList = currentSaved;
+      let nextSavedList;
 
       if (nextSaved) {
+        const itemForSidebar = {
+          ...(knownCompetition || {}),
+          id: competitionId,
+          is_saved: true,
+        };
         nextSavedList = [
-          updatedCompetition,
+          itemForSidebar,
           ...currentSaved.filter((item) => item.id !== competitionId),
         ].slice(0, 6);
       } else {
@@ -200,13 +253,9 @@ export default function LandingPage() {
         />
 
         <main className="landing-main">
-          <h1>Active competitions</h1>
-
           <CompetitionTabs
             activeTab={filters.tab}
-            onChange={(tab) =>
-              setFilters((prev) => ({ ...prev, tab }))
-            }
+            onChange={(tab) => setFilters((prev) => ({ ...prev, tab }))}
           />
 
           {loading ? (
@@ -227,7 +276,9 @@ export default function LandingPage() {
                 ))}
               </div>
 
-              {isAuthenticated && <RightSidebar data={sidebarData} />}
+              {isAuthenticated && (
+                <RightSidebar data={sidebarData} onSavedChange={handleSavedChange} />
+              )}
             </div>
           )}
         </main>
@@ -242,9 +293,16 @@ export default function LandingPage() {
         />
       )}
 
-      {authStep === "onboard" && (
-        <OnboardModal onFinish={handleFinishOnboarding} />
+      {authStep === "signin" && (
+        <SignInModal
+          isOpen={true}
+          onClose={() => setAuthStep(null)}
+          onOpenSignUp={handleOpenSignUp}
+          onComplete={handleSignInComplete}
+        />
       )}
+
+      {authStep === "onboard" && <OnboardModal onFinish={handleFinishOnboarding} />}
     </div>
   );
 }

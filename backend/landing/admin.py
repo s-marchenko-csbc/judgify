@@ -1,15 +1,21 @@
 from django.contrib import admin
-from .models import Competition, UserSavedCompetition, UserCompetitionWatch
+from .models import (
+    Competition, UserSavedCompetition, UserCompetitionWatch,
+    UserProfile, UserFile, RecentlyViewedCompetition, RecentlyViewedMaterial, Badge, UserBadge, Certificate, UserMaterial,
+    CompetitionTeam, CompetitionParticipant, CompetitionJoinRequest,
+    CompetitionRound, CompetitionSubmissionSettings, CompetitionJudgingCriterion,
+    CompetitionAward, CompetitionInvitation, OutboundMessage,
+)
 
 
 @admin.register(Competition)
 class CompetitionAdmin(admin.ModelAdmin):
     list_display = (
         'id', 'name', 'status', 'event_type', 'participation_type', 'industry',
-        'difficulty', 'is_online_now', 'submissions_open', 'created_at'
+        'difficulty', 'language', 'is_online_now', 'submissions_open', 'created_at'
     )
     list_filter = (
-        'status', 'event_type', 'participation_type', 'industry', 'difficulty',
+        'status', 'event_type', 'participation_type', 'industry', 'difficulty', 'language',
         'is_online_now', 'submissions_open'
     )
     search_fields = ('name', 'short_description', 'slug')
@@ -23,3 +29,88 @@ class UserSavedCompetitionAdmin(admin.ModelAdmin):
 @admin.register(UserCompetitionWatch)
 class UserCompetitionWatchAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'competition', 'watch_live', 'watch_rounds', 'watch_updates', 'created_at')
+
+
+@admin.register(UserProfile)
+class UserProfileAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "display_name", "primary_role", "organization", "updated_at")
+    list_filter = ("primary_role",)
+    search_fields = ("display_name", "user__username", "user__email", "organization")
+
+
+@admin.register(UserFile)
+class UserFileAdmin(admin.ModelAdmin):
+    list_display = ("id", "owner", "original_name", "file_type", "visibility", "size_bytes", "created_at")
+    list_filter = ("file_type", "visibility")
+    search_fields = ("original_name", "storage_key", "owner__username")
+
+
+@admin.register(RecentlyViewedCompetition)
+class RecentlyViewedCompetitionAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "competition", "view_count", "viewed_at")
+
+
+@admin.register(RecentlyViewedMaterial)
+class RecentlyViewedMaterialAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "material", "view_count", "viewed_at")
+
+admin.site.register(Badge)
+admin.site.register(UserBadge)
+admin.site.register(Certificate)
+admin.site.register(UserMaterial)
+
+
+@admin.register(CompetitionTeam)
+class CompetitionTeamAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "competition", "status", "captain", "updated_at")
+    list_filter = ("status", "competition")
+    search_fields = ("name", "competition__name", "captain__username", "captain__email")
+
+
+@admin.register(CompetitionParticipant)
+class CompetitionParticipantAdmin(admin.ModelAdmin):
+    list_display = ("id", "display_name", "competition", "team", "role", "status", "is_active_now", "joined_at")
+    list_filter = ("role", "status", "competition")
+    search_fields = ("display_name", "user__username", "user__email", "team__name", "competition__name")
+
+
+@admin.register(CompetitionJoinRequest)
+class CompetitionJoinRequestAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "competition", "role", "status", "team_name", "created_at", "reviewed_at")
+    list_filter = ("role", "status", "competition")
+    search_fields = ("user__username", "user__email", "competition__name", "team_name")
+
+
+@admin.register(CompetitionRound)
+class CompetitionRoundAdmin(admin.ModelAdmin):
+    list_display = ("competition", "title", "starts_at", "ends_at", "submission_required", "sort_order")
+    list_filter = ("submission_required",)
+
+
+@admin.register(CompetitionSubmissionSettings)
+class CompetitionSubmissionSettingsAdmin(admin.ModelAdmin):
+    list_display = ("competition", "submission_mode", "max_file_size_mb", "max_submissions")
+
+
+@admin.register(CompetitionJudgingCriterion)
+class CompetitionJudgingCriterionAdmin(admin.ModelAdmin):
+    list_display = ("competition", "title", "judging_mode", "max_score", "weight")
+
+
+@admin.register(CompetitionAward)
+class CompetitionAwardAdmin(admin.ModelAdmin):
+    list_display = ("competition", "title", "place", "issue_certificate", "issue_badge")
+
+
+@admin.register(CompetitionInvitation)
+class CompetitionInvitationAdmin(admin.ModelAdmin):
+    list_display = ("competition", "email", "target_type", "team_name", "status", "created_at")
+    list_filter = ("target_type", "status")
+    search_fields = ("email", "competition__name", "team_name")
+
+
+@admin.register(OutboundMessage)
+class OutboundMessageAdmin(admin.ModelAdmin):
+    list_display = ("recipient_email", "competition", "channel", "status", "created_at")
+    list_filter = ("channel", "status")
+    search_fields = ("recipient_email", "subject")
