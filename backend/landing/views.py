@@ -1125,6 +1125,10 @@ def normalize_builder_payload(data):
         if payload.get(field) == "":
             payload[field] = None
 
+    for nested_field in ["rounds", "submission_settings", "judging_criteria", "awards"]:
+        if payload.get(nested_field) is None:
+            payload.pop(nested_field, None)
+
     normalized_rounds = []
     for round_item in payload.get("rounds") or []:
         item = round_item.copy()

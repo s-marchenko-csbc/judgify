@@ -216,7 +216,6 @@ function timeValue(value) {
 
 function getScheduleErrors(draft) {
   const errors = [];
-  const now = Date.now();
   const starts = timeValue(draft.starts_at);
   const ends = timeValue(draft.ends_at);
   const registrationStarts = timeValue(draft.registration_starts_at);
@@ -225,8 +224,6 @@ function getScheduleErrors(draft) {
   const judgingEnds = timeValue(draft.judging_ends_at);
   const resultsAt = timeValue(draft.results_public_at);
 
-  if (starts && starts < now) errors.push("Competition cannot start before it is created.");
-  if (ends && ends < now) errors.push("Competition cannot end before it is created.");
   if (starts && ends && ends <= starts) errors.push("Competition end must be later than competition start.");
   if (registrationStarts && starts && registrationStarts > starts) errors.push("Registration cannot start after the competition starts.");
   if (registrationEnds && starts && registrationEnds > starts) errors.push("Registration must end no later than the competition start.");

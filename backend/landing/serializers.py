@@ -123,7 +123,6 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         data = {**getattr(self.instance, "__dict__", {}), **attrs}
-        created_at = getattr(self.instance, "created_at", None) or timezone.now()
 
         starts_at = data.get("starts_at")
         ends_at = data.get("ends_at")
@@ -135,10 +134,6 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
 
         errors = {}
 
-        if starts_at and starts_at < created_at:
-            errors["starts_at"] = "Competition cannot start before it is created."
-        if ends_at and ends_at < created_at:
-            errors["ends_at"] = "Competition cannot end before it is created."
         if starts_at and ends_at and ends_at <= starts_at:
             errors["ends_at"] = "Competition end must be later than competition start."
 
