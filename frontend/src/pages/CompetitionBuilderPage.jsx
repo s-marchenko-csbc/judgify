@@ -3,9 +3,11 @@ import { Navigate, useNavigate, useParams } from "react-router-dom";
 import AccountSwitcher from "../components/AccountSwitcher";
 import { useAuth } from "../context/AuthContext";
 import {
+  assignCompetitionJudge,
   createCompetitionDraft,
   createCompetitionInvitations,
   fetchCompetitionBuilder,
+  fetchCompetitionJudges,
   publishCompetition,
   saveCompetitionBuilder,
 } from "../api/competitionBuilderApi";
@@ -265,13 +267,15 @@ function ToggleCard({ active, title, text, onClick }) {
 export default function CompetitionBuilderPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const [step, setStep] = useState(1);
   const [draft, setDraft] = useState(defaultDraft);
   const [competitionId, setCompetitionId] = useState(id || null);
   const [statusText, setStatusText] = useState("");
   const [inviteText, setInviteText] = useState("");
   const [teamInviteText, setTeamInviteText] = useState("");
+  const [judgeText, setJudgeText] = useState("");
+  const [judges, setJudges] = useState([]);
   const [saving, setSaving] = useState(false);
   const draftCreationStartedRef = useRef(false);
 
@@ -281,6 +285,9 @@ export default function CompetitionBuilderPage() {
       fetchCompetitionBuilder(id).then((data) => {
         setDraft(normalizeDraft(data));
         setStep(data.setup_step || 1);
+        return fetchCompetitionJudges(id);
+      }).then((items) => {
+        if (items) setJudges(items);
       }).catch((error) => setStatusText(error.message));
     } else {
       if (draftCreationStartedRef.current) return;
@@ -288,6 +295,11 @@ export default function CompetitionBuilderPage() {
       createCompetitionDraft(preparePayload(defaultDraft, 1)).then((data) => {
         setCompetitionId(data.id);
         setDraft(normalizeDraft(data));
+        return fetchCompetitionJudges(data.id).then((items) => {
+          setJudges(items || []);
+          return data;
+        });
+      }).then((data) => {
         navigate(`/competitions/${data.id}/edit`, { replace: true });
       }).catch((error) => {
         draftCreationStartedRef.current = false;
@@ -340,6 +352,8 @@ export default function CompetitionBuilderPage() {
   }, [draft]);
 
   const scheduleErrors = useMemo(() => getScheduleErrors(draft), [draft]);
+  const approvalStatus = draft.organizer_approval_status || "pending";
+  const canPublishFromApproval = user?.primaryRole === "admin" || approvalStatus === "approved";
 
   const handlePublish = async () => {
     await saveDraft(5);
@@ -369,6 +383,20 @@ export default function CompetitionBuilderPage() {
       if (targetType === "team") setTeamInviteText(""); else setInviteText("");
     } catch (error) {
       setStatusText(error.message || "Invitations were not queued");
+    }
+  };
+
+  const assignJudge = async () => {
+    const email = judgeText.trim();
+    if (!email || !competitionId) return;
+    try {
+      await assignCompetitionJudge(competitionId, { email, displayName: email.split("@")[0] });
+      const items = await fetchCompetitionJudges(competitionId);
+      setJudges(items || []);
+      setJudgeText("");
+      setStatusText("Jury member assigned");
+    } catch (error) {
+      setStatusText(error.message || "Jury member was not assigned");
     }
   };
 
@@ -505,6 +533,13 @@ export default function CompetitionBuilderPage() {
                 {draft.judging_criteria.map((criterion, index) => <div className="builder-inline-card" key={index}><input value={criterion.title} onChange={(e) => updateArrayItem("judging_criteria", index, "title", e.target.value)} /><input type="number" value={criterion.max_score} onChange={(e) => updateArrayItem("judging_criteria", index, "max_score", Number(e.target.value))} /><input type="number" step="0.1" value={criterion.weight} onChange={(e) => updateArrayItem("judging_criteria", index, "weight", Number(e.target.value))} /></div>)}
                 <button type="button" onClick={() => addArrayItem("judging_criteria", { title: "New criterion", description: "", max_score: 10, weight: 1 })}>+ Add criterion</button>
 
+                <h2>Jury assignment</h2>
+                <div className="builder-form-grid">
+                  <Field label="Judge email"><input type="email" value={judgeText} onChange={(e) => setJudgeText(e.target.value)} placeholder="judge@example.com" /></Field>
+                </div>
+                <button type="button" onClick={assignJudge}>Assign jury member</button>
+                {judges.length > 0 && <div className="builder-inline-card">{judges.map((judge) => <span key={judge.id}>{judge.display_name || judge.user_name || "Judge"} · {judge.status}</span>)}</div>}
+
                 <h2>Awards</h2>
                 {draft.awards.map((award, index) => <div className="builder-inline-card" key={index}><input value={award.title} onChange={(e) => updateArrayItem("awards", index, "title", e.target.value)} /><input type="number" value={award.place || ""} onChange={(e) => updateArrayItem("awards", index, "place", Number(e.target.value))} /></div>)}
                 <button type="button" onClick={() => addArrayItem("awards", { title: "Special award", place: null, issue_certificate: true, issue_badge: true })}>+ Add award</button>
@@ -520,6 +555,7 @@ export default function CompetitionBuilderPage() {
                 <section className="builder-validation">
                   <h2>Validation</h2>
                   {validation.length ? <p>Fix before publication: {validation.join(", ")}</p> : <p>Required publication fields are filled.</p>}
+                  <p>Administrator approval: {approvalStatus}</p>
                 </section>
                 <section className="builder-invites">
                   <h2>Invitation infrastructure</h2>
@@ -531,7 +567,7 @@ export default function CompetitionBuilderPage() {
                   <button type="button" onClick={() => queueInvitations("individual")}>Queue individual invitations</button>
                   <button type="button" onClick={() => queueInvitations("team")}>Queue team invitations</button>
                 </section>
-                <button className="builder-publish-btn" type="button" onClick={handlePublish} disabled={validation.length > 0}>Publish competition</button>
+                <button className="builder-publish-btn" type="button" onClick={handlePublish} disabled={validation.length > 0 || !canPublishFromApproval}>Publish competition</button>
               </div>
             )}
 

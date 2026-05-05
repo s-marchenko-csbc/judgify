@@ -107,6 +107,7 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
             "allow_organizer_team_assignment", "registration_open",
             "submissions_open", "is_public", "setup_step",
             "completion_percent", "publish_ready",
+            "organizer_approval_status", "organizer_approved_at",
             "registration_starts_at", "registration_ends_at",
             "starts_at", "ends_at", "judging_starts_at",
             "judging_ends_at", "results_public_at", "timer_deadline",
@@ -114,7 +115,10 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
             "submission_settings", "judging_criteria", "awards", "invitations",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "slug", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "slug", "organizer_approval_status",
+            "organizer_approved_at", "created_at", "updated_at",
+        ]
 
     def validate(self, attrs):
         data = {**getattr(self.instance, "__dict__", {}), **attrs}

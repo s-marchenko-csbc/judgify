@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import CompetitionCard from "../components/CompetitionCard";
-import { fetchProfileDashboard, reviewJoinRequest, updateProfileDashboard, updateTeamManagement } from "../api/profileApi";
+import { fetchProfileDashboard, reviewCompetitionCreation, reviewJoinRequest, updateProfileDashboard, updateTeamManagement } from "../api/profileApi";
 import { useAuth } from "../context/AuthContext";
 import AccountSwitcher from "../components/AccountSwitcher";
 
@@ -138,7 +138,7 @@ function DraftsPanel({ items = [] }) {
           {items.map((draft) => (
             <button type="button" className="profile-draft-card" key={draft.id} onClick={() => window.location.assign(`/competitions/${draft.id}/edit`)}>
               <strong>{draft.name}</strong>
-              <span>{draft.stage || draft.status_label || `Step ${draft.setup_step || 1} · ${draft.status || "Draft"}`}</span>
+              <span>{draft.stage || draft.status_label || `Step ${draft.setup_step || 1} · ${draft.status || "Draft"}`} · approval: {getStatusLabel(draft.organizer_approval_status || "pending")}</span>
               <div className="profile-progress"><i style={{ width: `${draft.progress || draft.completion_percent || 35}%` }} /></div>
             </button>
           ))}
@@ -263,6 +263,12 @@ function PendingRequestsPanel({ role, requests = [], onReview }) {
                   <button type="button" className="danger" onClick={() => onReview?.(item.id, "rejected")}>Reject</button>
                 </div>
               )}
+              {role === "admin" && item.type === "competition_creation_request" && (
+                <div className="profile-pending-actions">
+                  <button type="button" onClick={() => onReview?.(item.competition_id || item.id, "approved", item.type)}>Approve</button>
+                  <button type="button" className="danger" onClick={() => onReview?.(item.competition_id || item.id, "rejected", item.type)}>Reject</button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -313,7 +319,7 @@ function ProfileEditForm({ user, onSave }) {
         <div className="profile-form-grid">
           <label>Display name<input value={draft.displayName} onChange={(e) => setField("displayName", e.target.value)} /></label>
           <label>Email<input type="email" value={draft.email} onChange={(e) => setField("email", e.target.value)} /></label>
-          <label>Status<select value={draft.primaryRole} onChange={(e) => setField("primaryRole", e.target.value)}><option value="organizer">Organizer</option><option value="participant">Participant</option><option value="viewer">Viewer</option><option value="admin">Administrator</option></select></label>
+          <label>Status<select value={draft.primaryRole} onChange={(e) => setField("primaryRole", e.target.value)}><option value="organizer">Organizer</option><option value="participant">Participant</option><option value="viewer">Viewer</option>{normalizeRole(user?.primaryRole) === "admin" && <option value="admin">Administrator</option>}</select></label>
           <label>Organization<input value={draft.organization} onChange={(e) => setField("organization", e.target.value)} /></label>
           <label>Country<input value={draft.country} onChange={(e) => setField("country", e.target.value)} /></label>
           <label>Skills<input value={draft.skillsText} onChange={(e) => setField("skillsText", e.target.value)} /></label>
@@ -391,8 +397,12 @@ export default function ProfilePage() {
     setArchivedCompetitions(patch);
   };
 
-  const handleReview = async (requestId, decision) => {
-    await reviewJoinRequest(requestId, decision);
+  const handleReview = async (requestId, decision, type = "join_request") => {
+    if (type === "competition_creation_request") {
+      await reviewCompetitionCreation(requestId, decision);
+    } else {
+      await reviewJoinRequest(requestId, decision);
+    }
     await loadDashboard();
   };
 

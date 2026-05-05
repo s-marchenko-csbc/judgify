@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.contrib.auth import get_user_model, login, logout
 from django.db.models import Q, F, ExpressionWrapper, FloatField
 from django.shortcuts import get_object_or_404
+from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
 from django.utils import timezone
@@ -169,6 +170,25 @@ def get_or_create_profile(user, defaults=None):
     )
     return profile
 
+
+def user_is_admin(user):
+    if not user.is_authenticated:
+        return False
+    profile = get_or_create_profile(user)
+    return user.is_staff or user.is_superuser or profile.primary_role == "admin"
+
+
+def user_primary_role(user):
+    if not user.is_authenticated:
+        return None
+    return get_or_create_profile(user).primary_role
+
+
+def user_can_create_competitions(user):
+    role = user_primary_role(user)
+    return user_is_admin(user) or role == "organizer"
+
+
 def serialize_user(user):
     profile = get_or_create_profile(user)
     return {
@@ -196,7 +216,10 @@ class CsrfView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        return Response({"detail": "CSRF cookie set"})
+        return Response({
+            "detail": "CSRF cookie set",
+            "csrfToken": get_token(request),
+        })
 
 
 class CurrentUserView(APIView):
@@ -219,7 +242,9 @@ class DevLoginView(APIView):
         User = get_user_model()
         display_name = request.data.get("displayName") or "Demo User"
         email = request.data.get("email") or "demo@example.com"
-        primary_role = request.data.get("primaryRole") or request.data.get("primary_role") or "participant"
+        requested_role = request.data.get("primaryRole") or request.data.get("primary_role") or "participant"
+        valid_roles = {choice[0] for choice in UserProfile.ROLE_CHOICES}
+        primary_role = requested_role if requested_role in valid_roles else "participant"
         account_key = request.data.get("accountKey") or request.data.get("account_key")
         email_base = (email.split("@")[0] if email else "demo_user").replace(".", "_").replace("+", "_")
         username = request.data.get("username") or account_key or f"{email_base}_{primary_role}"
@@ -239,7 +264,16 @@ class DevLoginView(APIView):
         if changed:
             user.save()
 
-        profile = get_or_create_profile(user, {"primary_role": primary_role})
+        profile = get_or_create_profile(user, {"primary_role": "participant"})
+        is_demo_admin = account_key == "demo:admin" and username == "demo_admin"
+        if is_demo_admin and not user.is_staff:
+            user.is_staff = True
+            user.save(update_fields=["is_staff"])
+        if primary_role == "admin" and not (user.is_staff or user.is_superuser or profile.primary_role == "admin"):
+            return Response(
+                {"detail": "Administrator role cannot be self-assigned."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         profile.display_name = display_name or profile.display_name
         profile.primary_role = primary_role
         profile.save(update_fields=["display_name", "primary_role", "updated_at"])
@@ -249,6 +283,7 @@ class DevLoginView(APIView):
         return Response({
             "authenticated": True,
             "user": serialize_user(user),
+            "csrfToken": get_token(request),
         })
 
 
@@ -257,7 +292,10 @@ class LogoutView(APIView):
 
     def post(self, request):
         logout(request)
-        return Response({"authenticated": False})
+        return Response({
+            "authenticated": False,
+            "csrfToken": get_token(request),
+        })
 
 
 class HealthCheckView(APIView):
@@ -964,6 +1002,7 @@ class ProfileDashboardView(APIView):
             organizer_drafts = Competition.objects.filter(
                 participant_entries__role="organizer",
                 status="draft",
+                organizer_approval_status="pending",
             ).select_related().distinct().order_by("-updated_at")[:20]
             pending_requests = [
                 {
@@ -972,7 +1011,7 @@ class ProfileDashboardView(APIView):
                     "title": item.name,
                     "competition_id": item.id,
                     "competition_name": item.name,
-                    "status": item.status,
+                    "status": item.organizer_approval_status,
                     "message": item.short_description or "Organizer draft awaiting administrative review.",
                     "created_at": item.created_at,
                 }
@@ -1032,7 +1071,6 @@ class ProfileDashboardView(APIView):
         data = request.data
         mapping = {
             "displayName": "display_name",
-            "primaryRole": "primary_role",
         }
         allowed = ["bio", "organization", "position", "phone", "country", "city", "skills", "interests", "links"]
         if "email" in data:
@@ -1045,6 +1083,17 @@ class ProfileDashboardView(APIView):
         for frontend_key, model_key in mapping.items():
             if frontend_key in data:
                 setattr(profile, model_key, data[frontend_key])
+        if "primaryRole" in data:
+            next_role = data["primaryRole"]
+            valid_roles = {choice[0] for choice in UserProfile.ROLE_CHOICES}
+            if next_role not in valid_roles:
+                return Response({"detail": "Unsupported profile role."}, status=status.HTTP_400_BAD_REQUEST)
+            if next_role == "admin" and not user_is_admin(request.user):
+                return Response(
+                    {"detail": "Administrator role cannot be self-assigned."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            profile.primary_role = next_role
         for key in allowed:
             if key in data:
                 setattr(profile, key, data[key])
@@ -1084,9 +1133,9 @@ def normalize_builder_payload(data):
 def user_can_edit_competition(user, competition):
     if not user.is_authenticated:
         return False
-    profile = get_or_create_profile(user)
-    if profile.primary_role == "admin" or user.is_staff:
+    if user_is_admin(user):
         return True
+    profile = get_or_create_profile(user)
     if profile.primary_role != "organizer":
         return False
     if CompetitionParticipant.objects.filter(competition=competition, user=user, role="organizer").exists():
@@ -1119,6 +1168,11 @@ class CompetitionDraftListCreateView(APIView):
         return Response(CompetitionBuilderSerializer(qs, many=True, context={"request": request}).data)
 
     def post(self, request):
+        if not user_can_create_competitions(request.user):
+            return Response(
+                {"detail": "Only organizers or administrators can create competitions."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         data = normalize_builder_payload(request.data)
         data.setdefault("name", "Untitled competition")
         if data.get("name") == "Untitled competition":
@@ -1177,6 +1231,14 @@ class CompetitionPublishView(APIView):
         competition = get_object_or_404(Competition, pk=pk)
         if not user_can_edit_competition(request.user, competition):
             return Response({"detail": "You cannot publish this competition."}, status=status.HTTP_403_FORBIDDEN)
+        if not user_is_admin(request.user) and competition.organizer_approval_status != "approved":
+            return Response(
+                {
+                    "detail": "An administrator must approve this competition before the organizer can publish it.",
+                    "organizer_approval_status": competition.organizer_approval_status,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         missing = []
         for field in ["name", "short_description", "industry", "participation_type", "access_mode", "ends_at"]:
@@ -1235,6 +1297,108 @@ class CompetitionPublishView(APIView):
         competition.save(update_fields=["starts_at", "status", "is_public", "show_in_catalog", "publish_ready", "completion_percent", "updated_at"])
         recompute_competition_timing(competition, save=True)
         return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
+
+
+class CompetitionOrganizerApprovalView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        if not user_is_admin(request.user):
+            return Response(
+                {"detail": "Only administrators can approve organizer competition requests."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        competition = get_object_or_404(Competition, pk=pk)
+        decision = (request.data.get("decision") or request.data.get("status") or "").strip().lower()
+        if decision not in {"approved", "rejected"}:
+            return Response(
+                {"detail": "Decision must be approved or rejected."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        competition.organizer_approval_status = decision
+        competition.organizer_approved_by = request.user
+        competition.organizer_approved_at = timezone.now()
+        if decision == "rejected":
+            competition.publish_ready = False
+        competition.save(update_fields=[
+            "organizer_approval_status",
+            "organizer_approved_by",
+            "organizer_approved_at",
+            "publish_ready",
+            "updated_at",
+        ])
+        return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
+
+
+class CompetitionJudgeAssignmentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot view jury assignments for this competition."}, status=status.HTTP_403_FORBIDDEN)
+
+        judges = CompetitionParticipant.objects.filter(
+            competition=competition,
+            role="judge",
+        ).select_related("user", "team")
+        return Response(CompetitionParticipantSerializer(judges, many=True).data)
+
+    def post(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot assign jury members for this competition."}, status=status.HTTP_403_FORBIDDEN)
+
+        User = get_user_model()
+        email = (request.data.get("email") or "").strip()
+        username = (request.data.get("username") or "").strip()
+        display_name = (request.data.get("display_name") or request.data.get("displayName") or "").strip()
+
+        if not (email or username):
+            return Response({"detail": "Judge email or username is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not username:
+            username = email.split("@")[0].replace(".", "_").replace("+", "_")
+
+        user, created = User.objects.get_or_create(
+            username=username,
+            defaults={
+                "email": email,
+                "first_name": display_name or username,
+            },
+        )
+        changed = False
+        if email and getattr(user, "email", "") != email:
+            user.email = email
+            changed = True
+        if display_name and not user.get_full_name():
+            user.first_name = display_name
+            changed = True
+        if created:
+            user.set_unusable_password()
+            changed = True
+        if changed:
+            user.save()
+
+        profile = get_or_create_profile(user, {"primary_role": "participant"})
+        if not profile.display_name and display_name:
+            profile.display_name = display_name
+            profile.save(update_fields=["display_name", "updated_at"])
+
+        participant, _ = CompetitionParticipant.objects.update_or_create(
+            competition=competition,
+            user=user,
+            defaults={
+                "display_name": display_name or user.get_full_name() or user.get_username(),
+                "role": "judge",
+                "status": "approved",
+                "team": None,
+                "is_active_now": False,
+            },
+        )
+        return Response(CompetitionParticipantSerializer(participant).data, status=status.HTTP_201_CREATED)
 
 
 class CompetitionInvitationView(APIView):

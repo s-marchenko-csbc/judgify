@@ -2,6 +2,7 @@ const API_BASE =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
 
 let csrfReady = false;
+let csrfToken = "";
 
 function getCookie(name) {
   const value = `; ${document.cookie}`;
@@ -13,7 +14,7 @@ function getCookie(name) {
 }
 
 async function ensureCsrfCookie() {
-  if (csrfReady && getCookie("csrftoken")) return;
+  if (csrfReady && csrfToken) return csrfToken;
 
   const response = await fetch(`${API_BASE}/auth/csrf/`, {
     method: "GET",
@@ -24,54 +25,88 @@ async function ensureCsrfCookie() {
     throw new Error("Failed to initialize CSRF protection");
   }
 
+  const payload = await response.json();
+  csrfToken = payload.csrfToken || getCookie("csrftoken");
+  if (!csrfToken) {
+    throw new Error("Failed to initialize CSRF token");
+  }
   csrfReady = true;
+  return csrfToken;
 }
 
 function isUnsafeMethod(method) {
   return !["GET", "HEAD", "OPTIONS", "TRACE"].includes(method.toUpperCase());
 }
 
-export async function apiRequest(path, options = {}) {
-  const method = options.method || "GET";
-  const headers = new Headers(options.headers || {});
-
-  if (!headers.has("Content-Type") && options.body) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  if (isUnsafeMethod(method)) {
-    await ensureCsrfCookie();
-    headers.set("X-CSRFToken", getCookie("csrftoken"));
-  }
-
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    method,
-    headers,
-    credentials: "include",
-  });
-
+async function readPayload(response) {
   const contentType = response.headers.get("content-type") || "";
-  const payload = contentType.includes("application/json")
+  return contentType.includes("application/json")
     ? await response.json()
     : await response.text();
+}
 
-  if (!response.ok) {
-    let message = `Request failed: ${response.status}`;
-    if (typeof payload === "object" && payload) {
-      if (payload.detail) {
-        message = payload.detail;
-      } else {
-        const fieldErrors = Object.entries(payload)
-          .map(([field, value]) => `${field}: ${Array.isArray(value) ? value.join(", ") : JSON.stringify(value)}`)
-          .join("; ");
-        if (fieldErrors) message = fieldErrors;
-      }
+function getErrorMessage(response, payload) {
+  let message = `Request failed: ${response.status}`;
+  if (typeof payload === "object" && payload) {
+    if (payload.detail) {
+      message = payload.detail;
+    } else {
+      const fieldErrors = Object.entries(payload)
+        .map(([field, value]) => `${field}: ${Array.isArray(value) ? value.join(", ") : JSON.stringify(value)}`)
+        .join("; ");
+      if (fieldErrors) message = fieldErrors;
     }
-    throw new Error(message);
+  }
+  return message;
+}
+
+function resetCsrfToken() {
+  csrfReady = false;
+  csrfToken = "";
+}
+
+export async function apiRequest(path, options = {}) {
+  const method = options.method || "GET";
+  const unsafe = isUnsafeMethod(method);
+  const baseHeaders = new Headers(options.headers || {});
+
+  if (!baseHeaders.has("Content-Type") && options.body) {
+    baseHeaders.set("Content-Type", "application/json");
   }
 
-  return payload;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const headers = new Headers(baseHeaders);
+    if (unsafe) {
+      headers.set("X-CSRFToken", await ensureCsrfCookie());
+    }
+
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      method,
+      headers,
+      credentials: "include",
+    });
+
+    const payload = await readPayload(response);
+
+    if (typeof payload === "object" && payload?.csrfToken) {
+      csrfToken = payload.csrfToken;
+      csrfReady = true;
+    }
+
+    if (!response.ok) {
+      const message = getErrorMessage(response, payload);
+      if (unsafe && response.status === 403 && attempt === 0 && message.toLowerCase().includes("csrf")) {
+        resetCsrfToken();
+        continue;
+      }
+      throw new Error(message);
+    }
+
+    return payload;
+  }
+
+  throw new Error("Request failed after refreshing CSRF token");
 }
 
 export { API_BASE, ensureCsrfCookie, getCookie };

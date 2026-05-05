@@ -347,7 +347,12 @@ class Command(BaseCommand):
 
         competitions = []
         for item in data:
-            competitions.append(Competition.objects.create(is_public=True, show_in_catalog=True, **item))
+            competitions.append(Competition.objects.create(
+                is_public=True,
+                show_in_catalog=True,
+                organizer_approval_status="approved",
+                **item,
+            ))
         return competitions
 
     def _assign_all_competitions_to_demo_organizer(self, competitions, organizer_user):

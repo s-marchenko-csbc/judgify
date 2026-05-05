@@ -28,6 +28,24 @@ export function publishCompetition(id) {
   });
 }
 
+export function reviewCompetitionApproval(id, decision) {
+  return apiRequest(`/competition-builder/${id}/approval/`, {
+    method: "POST",
+    body: JSON.stringify({ decision }),
+  });
+}
+
+export function fetchCompetitionJudges(id) {
+  return apiRequest(`/competition-builder/${id}/judges/`);
+}
+
+export function assignCompetitionJudge(id, payload = {}) {
+  return apiRequest(`/competition-builder/${id}/judges/`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function createCompetitionInvitations(id, payload = {}) {
   return apiRequest(`/competition-builder/${id}/invitations/`, {
     method: "POST",

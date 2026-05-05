@@ -20,6 +20,14 @@ export function reviewJoinRequest(requestId, decision) {
 }
 
 
+export function reviewCompetitionCreation(competitionId, decision) {
+  return apiRequest(`/competition-builder/${competitionId}/approval/`, {
+    method: "POST",
+    body: JSON.stringify({ decision }),
+  });
+}
+
+
 export function updateTeamManagement(teamId, payload = {}) {
   return apiRequest(`/me/teams/${teamId}/`, {
     method: "PATCH",

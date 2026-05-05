@@ -40,6 +40,12 @@ class Competition(models.Model):
         ("private", "Private"),
     ]
 
+    ORGANIZER_APPROVAL_CHOICES = [
+        ("pending", "Pending administrator approval"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    ]
+
     INDUSTRY_CHOICES = [
         ("programming", "Programming"),
         ("design", "Design"),
@@ -111,6 +117,20 @@ class Competition(models.Model):
     setup_step = models.PositiveSmallIntegerField(default=1)
     completion_percent = models.PositiveSmallIntegerField(default=0)
     publish_ready = models.BooleanField(default=False)
+    organizer_approval_status = models.CharField(
+        max_length=16,
+        choices=ORGANIZER_APPROVAL_CHOICES,
+        default="pending",
+        db_index=True,
+    )
+    organizer_approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_competitions",
+    )
+    organizer_approved_at = models.DateTimeField(null=True, blank=True)
 
     trending_score = models.FloatField(default=0)
 
