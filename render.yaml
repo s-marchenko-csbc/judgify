@@ -1,16 +1,16 @@
 databases:
-  - name: judgify-db
-    databaseName: judgify
-    user: judgify
+  - name: olympiad-db
+    databaseName: olympiad
+    user: olympiad
     plan: free
 
 services:
   - type: web
-    name: judgify-api
+    name: olympiad-api
     runtime: python
     rootDir: backend
     plan: free
-    buildCommand: ./build.sh
+    buildCommand: bash ./build.sh
     startCommand: python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
     envVars:
       - key: SECRET_KEY
@@ -19,26 +19,26 @@ services:
         value: "0"
       - key: DATABASE_URL
         fromDatabase:
-          name: judgify-db
+          name: olympiad-db
           property: connectionString
       - key: ALLOWED_HOSTS
-        value: judgify-api.onrender.com
+        value: olympiad-api.onrender.com
       - key: CORS_ALLOWED_ORIGINS
-        value: https://judgify-landing.onrender.com
+        value: https://olympiad-landing.onrender.com
       - key: CSRF_TRUSTED_ORIGINS
-        value: https://judgify-landing.onrender.com
+        value: https://olympiad-landing.onrender.com
       - key: SEED_DEMO_DATA
         value: "0"
 
   - type: web
-    name: judgify-landing
+    name: olympiad-landing
     runtime: static
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
     envVars:
       - key: VITE_API_BASE_URL
-        value: https://judgify-api.onrender.com/api
+        value: https://olympiad-api.onrender.com/api
     routes:
       - type: rewrite
         source: /*
