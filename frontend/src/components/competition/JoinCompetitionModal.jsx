@@ -6,8 +6,19 @@ const roles = [
   { id: "team_member", label: "Team participant" },
 ];
 
+function rolesForCompetition(competition) {
+  if (competition?.participation_type === "individual") {
+    return roles.filter((role) => role.id === "participant");
+  }
+  if (competition?.participation_type === "team") {
+    return roles.filter((role) => role.id === "team_member");
+  }
+  return roles;
+}
+
 export default function JoinCompetitionModal({ competition, onClose, onSubmitted }) {
-  const [selectedRole, setSelectedRole] = useState("participant");
+  const availableRoles = rolesForCompetition(competition);
+  const [selectedRole, setSelectedRole] = useState(availableRoles[0]?.id || "participant");
   const [teamName, setTeamName] = useState(competition?.user_team?.name || "");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -46,7 +57,7 @@ export default function JoinCompetitionModal({ competition, onClose, onSubmitted
         </p>
 
         <div className="join-role-list">
-          {roles.map((role) => (
+          {availableRoles.map((role) => (
             <button
               key={role.id}
               type="button"

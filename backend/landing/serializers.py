@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -165,14 +167,21 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
                 item_errors = {}
                 round_start = round_data.get("starts_at")
                 round_end = round_data.get("ends_at")
-                if round_start and round_start < starts_at:
+                effective_round_start = round_start
+                if not effective_round_start and previous_end:
+                    effective_round_start = previous_end + timedelta(seconds=1)
+                elif not effective_round_start and index == 0:
+                    effective_round_start = starts_at
+                if effective_round_start and effective_round_start < starts_at:
                     item_errors["starts_at"] = "Round must start within the competition window."
                 if round_end and round_end > ends_at:
                     item_errors["ends_at"] = "Round must end within the competition window."
-                if round_start and round_end and round_end <= round_start:
+                if effective_round_start and round_end and round_end <= effective_round_start:
                     item_errors["ends_at"] = "Round end must be later than round start."
-                if previous_end and round_start and round_start < previous_end:
-                    item_errors["starts_at"] = "Next round cannot start before the previous round ends."
+                if previous_end and effective_round_start and effective_round_start <= previous_end:
+                    item_errors["starts_at"] = "Next round must start after the previous round ends."
+                if previous_end and round_end and round_end <= previous_end:
+                    item_errors["ends_at"] = "Next round must end after the previous round ends."
                 if round_end:
                     previous_end = round_end
                 if item_errors:

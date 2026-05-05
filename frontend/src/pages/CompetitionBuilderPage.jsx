@@ -83,6 +83,13 @@ function fromDateTimeLocal(value) {
   return new Date(value).toISOString();
 }
 
+function toLocalInputFromTime(time) {
+  const date = new Date(time);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 
 function extractIframeSrc(value) {
   const text = String(value || "").trim();
@@ -186,16 +193,24 @@ function preparePayload(draft, step) {
   ].forEach((key) => {
     payload[key] = fromDateTimeLocal(payload[key]);
   });
-  payload.rounds = (payload.rounds || []).map((round) => {
+  let previousRoundEnd = null;
+  payload.rounds = (payload.rounds || []).map((round, index) => {
+    const derivedStart = !round.starts_at && previousRoundEnd
+      ? toLocalInputFromTime(previousRoundEnd + 1000)
+      : round.starts_at;
     const streamUrl = normalizeStreamInput(round.stream_url);
     const embedUrl = buildEmbedUrl(streamUrl);
-    return {
+    const prepared = {
       ...round,
-      starts_at: fromDateTimeLocal(round.starts_at),
+      starts_at: fromDateTimeLocal(derivedStart),
       ends_at: fromDateTimeLocal(round.ends_at),
       stream_url: streamUrl,
       stream_embed_url: round.is_stream_enabled ? embedUrl : "",
+      sort_order: index,
     };
+    const endTime = timeValue(round.ends_at);
+    if (endTime) previousRoundEnd = endTime;
+    return prepared;
   });
   payload.is_public = payload.visibility_mode === "public";
   payload.show_in_catalog = payload.visibility_mode === "public" && Boolean(payload.show_in_catalog);
@@ -236,11 +251,13 @@ function getScheduleErrors(draft) {
   (draft.rounds || []).forEach((round, index) => {
     const roundStart = timeValue(round.starts_at);
     const roundEnd = timeValue(round.ends_at);
+    const effectiveRoundStart = roundStart || (previousRoundEnd ? previousRoundEnd + 1000 : starts);
     const label = round.title || `Round ${index + 1}`;
-    if (roundStart && starts && roundStart < starts) errors.push(`${label}: round must start within the competition window.`);
+    if (effectiveRoundStart && starts && effectiveRoundStart < starts) errors.push(`${label}: round must start within the competition window.`);
     if (roundEnd && ends && roundEnd > ends) errors.push(`${label}: round must end within the competition window.`);
-    if (roundStart && roundEnd && roundEnd <= roundStart) errors.push(`${label}: round end must be later than round start.`);
-    if (previousRoundEnd && roundStart && roundStart < previousRoundEnd) errors.push(`${label}: next round cannot start before the previous round ends.`);
+    if (effectiveRoundStart && roundEnd && roundEnd <= effectiveRoundStart) errors.push(`${label}: round end must be later than round start.`);
+    if (previousRoundEnd && effectiveRoundStart && effectiveRoundStart <= previousRoundEnd) errors.push(`${label}: next round must start after the previous round ends.`);
+    if (previousRoundEnd && roundEnd && roundEnd <= previousRoundEnd) errors.push(`${label}: next round must end after the previous round ends.`);
     if (roundEnd) previousRoundEnd = roundEnd;
   });
 
@@ -330,6 +347,15 @@ export default function CompetitionBuilderPage() {
     setDraft((prev) => ({ ...prev, [section]: [...prev[section], { ...item, sort_order: prev[section].length }] }));
   };
 
+  const removeArrayItem = (section, index) => {
+    setDraft((prev) => {
+      const nextItems = (prev[section] || [])
+        .filter((_, itemIndex) => itemIndex !== index)
+        .map((item, itemIndex) => ({ ...item, sort_order: itemIndex }));
+      return { ...prev, [section]: nextItems };
+    });
+  };
+
   const saveDraft = async (nextStep = step) => {
     if (!competitionId || saving) return null;
     setSaving(true);
@@ -361,10 +387,12 @@ export default function CompetitionBuilderPage() {
 
   const scheduleErrors = useMemo(() => getScheduleErrors(draft), [draft]);
   const approvalStatus = draft.organizer_approval_status || "pending";
-  const canPublishFromApproval = user?.primaryRole === "admin" || approvalStatus === "approved";
+  const canPublishFromApproval = user?.primaryRole === "admin" || approvalStatus !== "rejected";
 
   const handlePublish = async () => {
-    await saveDraft(5);
+    if (!competitionId || validation.length > 0 || !canPublishFromApproval) return;
+    const saved = await saveDraft(5);
+    if (!saved) return;
     try {
       const published = await publishCompetition(competitionId);
       setDraft(normalizeDraft(published));
@@ -499,7 +527,7 @@ export default function CompetitionBuilderPage() {
                 </div>
                 <div className="builder-choice-grid">
                   <ToggleCard active={draft.participation_type === "individual"} title="Individual" text="Each participant submits independently." onClick={() => setField("participation_type", "individual")} />
-                  <ToggleCard active={draft.participation_type === "team"} title="Team" text="Participants join or create teams." onClick={() => setField("participation_type", "team")} />
+                  <ToggleCard active={draft.participation_type === "team"} title="Team" text="Registered participants join or create teams; organizers manage the competition only." onClick={() => setField("participation_type", "team")} />
                   <ToggleCard active={draft.participation_type === "mixed"} title="Mixed" text="Individual and team participation are both allowed." onClick={() => setField("participation_type", "mixed")} />
                 </div>
                 <div className="builder-form-grid">
@@ -507,10 +535,14 @@ export default function CompetitionBuilderPage() {
                   <CheckField label="Show in catalog" checked={draft.show_in_catalog} onChange={(value) => setField("show_in_catalog", value)} />
                   <CheckField label="Allow sharing link" checked={draft.allow_sharing_link} onChange={(value) => setField("allow_sharing_link", value)} />
                   <CheckField label="External registration" checked={draft.allow_external_registration} onChange={(value) => setField("allow_external_registration", value)} />
-                  <Field label="Min team size"><input type="number" min="1" value={draft.min_team_size} onChange={(e) => setField("min_team_size", Number(e.target.value))} /></Field>
-                  <Field label="Max team size"><input type="number" min="1" value={draft.max_team_size} onChange={(e) => setField("max_team_size", Number(e.target.value))} /></Field>
-                  <CheckField label="User team invites" checked={draft.allow_user_team_invites} onChange={(value) => setField("allow_user_team_invites", value)} />
-                  <CheckField label="Organizer team assignment" checked={draft.allow_organizer_team_assignment} onChange={(value) => setField("allow_organizer_team_assignment", value)} />
+                  {draft.participation_type !== "individual" && (
+                    <>
+                      <Field label="Min team size"><input type="number" min="1" value={draft.min_team_size} onChange={(e) => setField("min_team_size", Number(e.target.value))} /></Field>
+                      <Field label="Max team size"><input type="number" min="1" value={draft.max_team_size} onChange={(e) => setField("max_team_size", Number(e.target.value))} /></Field>
+                      <CheckField label="Participant team invites" checked={draft.allow_user_team_invites} onChange={(value) => setField("allow_user_team_invites", value)} />
+                      <CheckField label="Organizer team assignment" checked={draft.allow_organizer_team_assignment} onChange={(value) => setField("allow_organizer_team_assignment", value)} />
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -538,6 +570,17 @@ export default function CompetitionBuilderPage() {
                 <h2>Rounds</h2>
                 {draft.rounds.map((round, index) => (
                   <div className="builder-inline-card builder-round-card" key={index}>
+                    <div className="builder-round-card-head">
+                      <strong>Round {index + 1}</strong>
+                      <button
+                        type="button"
+                        className="builder-danger-btn"
+                        onClick={() => removeArrayItem("rounds", index)}
+                        disabled={draft.rounds.length <= 1}
+                      >
+                        Delete
+                      </button>
+                    </div>
                     <input value={round.title} onChange={(e) => updateArrayItem("rounds", index, "title", e.target.value)} placeholder="Round title" />
                     <input type="datetime-local" value={round.starts_at || ""} onChange={(e) => updateArrayItem("rounds", index, "starts_at", e.target.value)} title="Optional for the first/next sequential round; empty start is derived on publication." />
                     <input type="datetime-local" value={round.ends_at || ""} onChange={(e) => updateArrayItem("rounds", index, "ends_at", e.target.value)} />
@@ -618,7 +661,7 @@ export default function CompetitionBuilderPage() {
                 <section className="builder-validation">
                   <h2>Validation</h2>
                   {validation.length ? <p>Fix before publication: {validation.join(", ")}</p> : <p>Required publication fields are filled.</p>}
-                  <p>Administrator approval: {approvalStatus}</p>
+                  {approvalStatus === "rejected" && <p>Administrator review rejected this competition. It cannot be published until it is reviewed again.</p>}
                 </section>
                 <section className="builder-invites">
                   <h2>Invitation infrastructure</h2>

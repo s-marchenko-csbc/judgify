@@ -3149,6 +3149,24 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   border: 1px solid #d5deef;
 }
 
+.builder-round-card-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.builder-panel .builder-danger-btn {
+  background: #b03030;
+  padding: 8px 12px;
+}
+
+.builder-panel .builder-danger-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
 .builder-preview-card {
   display: grid;
   grid-template-columns: 220px 1fr;

@@ -1656,10 +1656,10 @@ class CompetitionPublishView(APIView):
         competition = get_object_or_404(Competition, pk=pk)
         if not user_can_edit_competition(request.user, competition):
             return Response({"detail": "You cannot publish this competition."}, status=status.HTTP_403_FORBIDDEN)
-        if not user_is_admin(request.user) and competition.organizer_approval_status != "approved":
+        if not user_is_admin(request.user) and competition.organizer_approval_status == "rejected":
             return Response(
                 {
-                    "detail": "An administrator must approve this competition before the organizer can publish it.",
+                    "detail": "This competition was rejected by an administrator and cannot be published until it is reviewed again.",
                     "organizer_approval_status": competition.organizer_approval_status,
                 },
                 status=status.HTTP_403_FORBIDDEN,
@@ -1687,7 +1687,7 @@ class CompetitionPublishView(APIView):
         round_errors = []
         for index, round_obj in enumerate(rounds):
             if not round_obj.starts_at:
-                round_obj.starts_at = competition.starts_at if previous_end is None else previous_end
+                round_obj.starts_at = competition.starts_at if previous_end is None else previous_end + timedelta(seconds=1)
             if not round_obj.ends_at:
                 round_errors.append({"index": index, "ends_at": "Round end time is required."})
                 continue
@@ -1697,8 +1697,10 @@ class CompetitionPublishView(APIView):
                 round_errors.append({"index": index, "ends_at": "Round cannot end after the competition ends."})
             if round_obj.ends_at <= round_obj.starts_at:
                 round_errors.append({"index": index, "ends_at": "Round end must be later than round start."})
-            if previous_end and round_obj.starts_at < previous_end:
-                round_errors.append({"index": index, "starts_at": "Next round cannot start before the previous round ends."})
+            if previous_end and round_obj.starts_at <= previous_end:
+                round_errors.append({"index": index, "starts_at": "Next round must start after the previous round ends."})
+            if previous_end and round_obj.ends_at <= previous_end:
+                round_errors.append({"index": index, "ends_at": "Next round must end after the previous round ends."})
             previous_end = round_obj.ends_at
 
         if round_errors:
