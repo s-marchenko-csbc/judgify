@@ -470,7 +470,11 @@ class LandingSidebarView(APIView):
 
         return Response({
             "recently_viewed": SidebarCompetitionSerializer(recent_competitions, many=True).data,
-            "recent_materials": RecentlyViewedMaterialSerializer(recent_material_records, many=True).data,
+            "recent_materials": RecentlyViewedMaterialSerializer(
+                recent_material_records,
+                many=True,
+                context={"request": request},
+            ).data,
             "last_competitions": SidebarCompetitionSerializer(recent_competitions, many=True).data,
             "saved_competitions": SidebarCompetitionSerializer(saved_competitions, many=True).data,
         })
@@ -659,7 +663,10 @@ class MarkMaterialViewedView(APIView):
                 viewed_at=timezone.now(),
             )
             viewed.refresh_from_db()
-        return Response(RecentlyViewedMaterialSerializer(viewed).data, status=status.HTTP_200_OK)
+        return Response(
+            RecentlyViewedMaterialSerializer(viewed, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class CompetitionAnnouncementsView(APIView):
@@ -1415,8 +1422,16 @@ class ProfileDashboardView(APIView):
             "draft_competitions": CompetitionCardSerializer(drafts, many=True, context={"request": request}).data,
             "teams": CompetitionTeamSerializer(teams, many=True).data,
             "badges": UserBadgeSerializer(UserBadge.objects.filter(user=user)[:12], many=True).data,
-            "certificates": CertificateSerializer(Certificate.objects.filter(user=user)[:12], many=True).data,
-            "materials": UserMaterialSerializer(UserMaterial.objects.filter(user=user)[:12], many=True).data,
+            "certificates": CertificateSerializer(
+                Certificate.objects.filter(user=user)[:12],
+                many=True,
+                context={"request": request},
+            ).data,
+            "materials": UserMaterialSerializer(
+                UserMaterial.objects.filter(user=user)[:12],
+                many=True,
+                context={"request": request},
+            ).data,
             "stats": {
                 "active": active.count(),
                 "pending": len(pending_requests),

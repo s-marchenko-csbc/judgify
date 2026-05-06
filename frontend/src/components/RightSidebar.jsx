@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { toggleSavedCompetition } from "../api/savedApi";
 import { useLanguage } from "../context/LanguageContext";
+import { getMaterialBadge, getMaterialMeta, getMaterialTitle, getMaterialUrl } from "../utils/materials";
 
 function getStatusLabel(status, t) {
   return t(`statuses.${status}`, { defaultValue: status });
@@ -54,19 +55,29 @@ function CompetitionRecentItem({ item, t }) {
   );
 }
 
-function MaterialRecentItem({ record }) {
+function MaterialRecentItem({ record, t }) {
   const material = record.material || {};
-  return (
-    <a className="recent-item recent-material-item" href={material.url || "#"} target="_blank" rel="noreferrer">
-      <div className="recent-material-icon">M</div>
+  const href = getMaterialUrl(material);
+  const content = (
+    <>
+      <div className="recent-material-icon">{getMaterialBadge(material)}</div>
       <div className="recent-item-content">
-        <div className="recent-item-name">{material.name}</div>
+        <div className="recent-item-name">{getMaterialTitle(material, t("profile.material"))}</div>
         <div className="recent-item-meta">
           <span>{record.competition_name}</span>
-          <span>{material.material_type}</span>
+          <span>{getMaterialMeta(material, t)}</span>
         </div>
       </div>
+    </>
+  );
+  return href ? (
+    <a className="recent-item recent-material-item" href={href} target="_blank" rel="noreferrer">
+      {content}
     </a>
+  ) : (
+    <div className="recent-item recent-material-item disabled">
+      {content}
+    </div>
   );
 }
 
@@ -165,7 +176,7 @@ export default function RightSidebar({ data, onSavedChange }) {
               {recentMaterials.length > 0 && (
                 <>
                   <div className="recent-section-title">{t("sidebar.materials")}</div>
-                  {recentMaterials.map((record) => <MaterialRecentItem key={`material-${record.material?.id || record.id}`} record={record} />)}
+                  {recentMaterials.map((record) => <MaterialRecentItem key={`material-${record.material?.id || record.id}`} record={record} t={t} />)}
                 </>
               )}
             </>

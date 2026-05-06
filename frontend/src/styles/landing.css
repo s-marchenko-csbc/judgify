@@ -1281,6 +1281,23 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   color: #384055;
 }
 
+.competition-download-item.disabled,
+.recent-material-item.disabled {
+  opacity: .62;
+  cursor: default;
+}
+
+.competition-download-item strong,
+.competition-download-item small {
+  display: block;
+}
+
+.competition-download-item small {
+  margin-top: 3px;
+  color: #69758d;
+  font-size: 12px;
+}
+
 .participant-list {
   display: flex;
   flex-direction: column;
@@ -2615,6 +2632,14 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
 }
 .profile-draft-card strong,
 .profile-resource-item strong { display: block; color: #1d2742; margin-bottom: 5px; }
+.profile-resource-item a {
+  display: block;
+  color: #1d2742;
+  font-weight: 800;
+  margin-bottom: 5px;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
 .profile-draft-card span,
 .profile-resource-item span { color: #43516e; font-size: 13px; }
 .profile-progress {
@@ -3151,6 +3176,26 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   border-radius: 18px;
   background: #f8fbff;
   border: 1px solid #d5deef;
+}
+
+.builder-material-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) minmax(120px, .8fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.builder-material-row a,
+.builder-material-row > span {
+  color: #1f3356;
+  font-weight: 800;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.builder-material-row small {
+  color: #6b7d95;
 }
 
 .builder-round-card-head {

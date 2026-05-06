@@ -75,10 +75,7 @@ function enrichCompetition(baseCompetition, language, t) {
     upcomingText: nextRound
       ? t("competitionPage.roundTimer", { round: nextRound, time: formatUpcomingCountdown(baseCompetition?.timer_deadline, t) })
       : t("competitionPage.timer", { time: formatUpcomingCountdown(baseCompetition?.timer_deadline, t) }),
-    materials: (baseCompetition?.materials || []).map((material) => ({
-      ...material,
-      icon: material.icon || "M",
-    })),
+    materials: baseCompetition?.materials || [],
     announcements: baseCompetition?.announcements || [],
     participants: baseCompetition?.participants || [],
     results: baseCompetition?.results || { roundHistory: [], leaderboard: [], roundScores: [] },

@@ -15,6 +15,7 @@ import {
   saveCompetitionBuilder,
   uploadCompetitionMaterial,
 } from "../api/competitionBuilderApi";
+import { getMaterialBadge, getMaterialMeta, getMaterialTitle, getMaterialUrl } from "../utils/materials";
 
 const defaultDraft = {
   name: "Untitled competition",
@@ -634,12 +635,21 @@ export default function CompetitionBuilderPage() {
                 <button type="button" onClick={uploadMaterial}>{t("builder.addMaterial")}</button>
                 {(draft.materials || []).length > 0 && (
                   <div className="builder-inline-card">
-                    {(draft.materials || []).map((material) => (
-                      <span key={material.id}>
-                        <a href={material.url || "#"} target="_blank" rel="noreferrer">{material.name}</a> · {material.material_type}
-                        <button type="button" onClick={() => removeMaterial(material.id)}>{t("builder.remove")}</button>
-                      </span>
-                    ))}
+                    {(draft.materials || []).map((material) => {
+                      const href = getMaterialUrl(material);
+                      return (
+                        <span className="builder-material-row" key={material.id}>
+                          <strong>{getMaterialBadge(material)}</strong>
+                          {href ? (
+                            <a href={href} target="_blank" rel="noreferrer">{getMaterialTitle(material, t("profile.material"))}</a>
+                          ) : (
+                            <span>{getMaterialTitle(material, t("profile.material"))}</span>
+                          )}
+                          <small>{getMaterialMeta(material, t)}</small>
+                          <button type="button" onClick={() => removeMaterial(material.id)}>{t("builder.remove")}</button>
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
 

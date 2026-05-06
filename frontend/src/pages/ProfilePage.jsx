@@ -5,6 +5,7 @@ import { fetchProfileDashboard, reviewCompetitionCreation, reviewJoinRequest, up
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 import AccountSwitcher from "../components/AccountSwitcher";
+import { getFileUrl, getMaterialMeta, getMaterialTitle } from "../utils/materials";
 
 function normalizeRole(role) {
   if (role === "administrator") return "admin";
@@ -184,6 +185,7 @@ function CompetitionSection({ title, items = [], savedIds, onSavedChange, emptyT
 
 function AwardAccordion({ title, count, items = [], emptyText, t }) {
   const latest = items[0];
+  const latestHref = getFileUrl(latest?.file);
   return (
     <details className="profile-panel profile-award-accordion" open={Boolean(latest)}>
       <summary>
@@ -194,16 +196,24 @@ function AwardAccordion({ title, count, items = [], emptyText, t }) {
         <>
           <article className="profile-latest-award">
             <small>{t("profile.latest")}</small>
-            <strong>{latest.title || latest.file?.original_name || title}</strong>
+            {latestHref ? (
+              <a href={latestHref} target="_blank" rel="noreferrer">{latest.title || latest.file?.original_name || title}</a>
+            ) : (
+              <strong>{latest.title || latest.file?.original_name || title}</strong>
+            )}
             <span>{latest.competition_name || latest.badge_type || latest.verification_code || t("profile.achievement")}</span>
           </article>
           <div className="profile-resource-list profile-award-list">
-            {items.map((item) => (
+            {items.map((item) => {
+              const href = getFileUrl(item.file);
+              const itemTitle = item.title || item.file?.original_name || title;
+              return (
               <div className="profile-resource-item" key={item.id || `${title}-${item.title}`}>
-                <strong>{item.title || item.file?.original_name || title}</strong>
+                {href ? <a href={href} target="_blank" rel="noreferrer">{itemTitle}</a> : <strong>{itemTitle}</strong>}
                 <span>{item.competition_name || item.badge_type || item.verification_code || "-"}</span>
               </div>
-            ))}
+              );
+            })}
           </div>
         </>
       )}
@@ -465,7 +475,16 @@ export default function ProfilePage() {
             </section>
             {role !== "viewer" && activeTab !== "overview" && <StatsBlock role={role} statsData={profileStats} onNavigate={setActiveTab} t={t} />}
             {(role === "participant" || role === "admin") && profileMaterials.length > 0 && (
-              <section className="profile-panel"><h2>{t("profile.personalMaterials")}</h2><div className="profile-resource-list">{profileMaterials.map((item) => <div className="profile-resource-item" key={item.id}><strong>{item.title || item.file?.original_name || t("profile.material")}</strong><span>{item.competition_name || t(`options.material_type.${item.material_type}`, { defaultValue: item.material_type || t("profile.file") })}</span></div>)}</div></section>
+              <section className="profile-panel"><h2>{t("profile.personalMaterials")}</h2><div className="profile-resource-list">{profileMaterials.map((item) => {
+                const href = getFileUrl(item.file);
+                const title = getMaterialTitle(item, t("profile.material"));
+                return (
+                  <div className="profile-resource-item" key={item.id}>
+                    {href ? <a href={href} target="_blank" rel="noreferrer">{title}</a> : <strong>{title}</strong>}
+                    <span>{item.competition_name || getMaterialMeta(item, t) || t("profile.file")}</span>
+                  </div>
+                );
+              })}</div></section>
             )}
           </aside>
         </div>

@@ -37,6 +37,15 @@ from .models import (
 )
 
 
+def build_file_download_url(user_file, request=None):
+    if not user_file:
+        return ""
+    if user_file.public_url:
+        return user_file.public_url
+    path = f"/api/files/{user_file.id}/download/"
+    return request.build_absolute_uri(path) if request else path
+
+
 class CompetitionRoundSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompetitionRound
@@ -257,6 +266,9 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
 
 class CompetitionMaterialSerializer(serializers.ModelSerializer):
     url = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
+    download_url = serializers.SerializerMethodField()
+    has_file = serializers.SerializerMethodField()
     file_id = serializers.IntegerField(read_only=True)
     original_name = serializers.CharField(source="file.original_name", read_only=True)
     mime_type = serializers.CharField(source="file.mime_type", read_only=True)
@@ -270,6 +282,9 @@ class CompetitionMaterialSerializer(serializers.ModelSerializer):
             "name",
             "material_type",
             "url",
+            "file_url",
+            "download_url",
+            "has_file",
             "file_id",
             "original_name",
             "mime_type",
@@ -279,11 +294,16 @@ class CompetitionMaterialSerializer(serializers.ModelSerializer):
         ]
 
     def get_url(self, obj):
-        if obj.file_id:
-            request = self.context.get("request")
-            path = f"/api/files/{obj.file_id}/download/"
-            return request.build_absolute_uri(path) if request else path
         return obj.url or ""
+
+    def get_file_url(self, obj):
+        return build_file_download_url(obj.file, self.context.get("request"))
+
+    def get_download_url(self, obj):
+        return self.get_file_url(obj) or obj.url or ""
+
+    def get_has_file(self, obj):
+        return bool(obj.file_id)
 
 
 
@@ -525,12 +545,13 @@ class CompetitionSubmissionSerializer(serializers.ModelSerializer):
     def get_file(self, obj):
         if not obj.file:
             return None
+        request = self.context.get("request")
         return {
             "id": obj.file_id,
             "original_name": obj.file.original_name,
             "mime_type": obj.file.mime_type,
             "size_bytes": obj.file.size_bytes,
-            "url": obj.file.public_url or f"/api/files/{obj.file_id}/download/",
+            "url": build_file_download_url(obj.file, request),
         }
 
 
@@ -1139,7 +1160,7 @@ class UserFileSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_url(self, obj):
-        return obj.public_url or ""
+        return build_file_download_url(obj, self.context.get("request"))
 
 
 class UserProfileSerializer(serializers.ModelSerializer):

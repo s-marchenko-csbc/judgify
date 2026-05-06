@@ -1,6 +1,7 @@
 import React from "react";
 import { markMaterialViewed } from "../../api/landingApi";
 import { useLanguage } from "../../context/LanguageContext";
+import { getMaterialBadge, getMaterialMeta, getMaterialTitle, getMaterialUrl } from "../../utils/materials";
 
 function getStatusLabel(status, t) {
   return t(`statuses.${status}`, { defaultValue: status });
@@ -72,24 +73,39 @@ export default function CompetitionSidebar({ competition }) {
         <h3 className="competition-block-heading">{t("competitionSidebar.downloads")}</h3>
 
         <div className="competition-download-list">
-          {(competition.materials || []).map((item) => (
-            <a
-              key={item.id}
-              href={item.url || "#"}
-              className="competition-download-item"
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => {
-                if (Number.isInteger(Number(item.id))) {
-                  markMaterialViewed(item.id).catch(console.error);
-                }
-              }}
-            >
-              <span>{item.icon || "M"}</span>
-              <span>{item.name}</span>
-              <span>{">"}</span>
-            </a>
-          ))}
+          {(competition.materials || []).map((item) => {
+            const href = getMaterialUrl(item);
+            const content = (
+              <>
+                <span>{getMaterialBadge(item)}</span>
+                <span>
+                  <strong>{getMaterialTitle(item, t("profile.material"))}</strong>
+                  {getMaterialMeta(item, t) && <small>{getMaterialMeta(item, t)}</small>}
+                </span>
+                <span>{">"}</span>
+              </>
+            );
+            return href ? (
+              <a
+                key={item.id}
+                href={href}
+                className="competition-download-item"
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => {
+                  if (Number.isInteger(Number(item.id))) {
+                    markMaterialViewed(item.id).catch(console.error);
+                  }
+                }}
+              >
+                {content}
+              </a>
+            ) : (
+              <div key={item.id} className="competition-download-item disabled">
+                {content}
+              </div>
+            );
+          })}
         </div>
       </section>
     </div>
