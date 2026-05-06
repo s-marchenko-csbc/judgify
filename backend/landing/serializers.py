@@ -47,6 +47,8 @@ def build_file_download_url(user_file, request=None):
 
 
 class CompetitionRoundSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+
     class Meta:
         model = CompetitionRound
         fields = [
@@ -68,6 +70,8 @@ class CompetitionSubmissionSettingsSerializer(serializers.ModelSerializer):
 
 
 class CompetitionJudgingCriterionSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+
     class Meta:
         model = CompetitionJudgingCriterion
         fields = [
@@ -77,6 +81,8 @@ class CompetitionJudgingCriterionSerializer(serializers.ModelSerializer):
 
 
 class CompetitionAwardSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+
     class Meta:
         model = CompetitionAward
         fields = ["id", "title", "place", "issue_certificate", "issue_badge", "description"]
@@ -236,11 +242,35 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
 
     def _sync_nested(self, competition, nested):
         if nested.get("rounds") is not None:
-            competition.rounds.all().delete()
             round_items = nested["rounds"] or [{"title": "Round 1", "description": "", "sort_order": 0}]
+            existing_rounds = {round_obj.id: round_obj for round_obj in competition.rounds.all()}
+            seen_round_ids = set()
             for index, item in enumerate(round_items):
+                item = item.copy()
+                round_id = item.pop("id", None)
                 item.setdefault("sort_order", index)
-                CompetitionRound.objects.create(competition=competition, **item)
+                if round_id and round_id in existing_rounds:
+                    round_obj = existing_rounds[round_id]
+                    for key, value in item.items():
+                        setattr(round_obj, key, value)
+                    round_obj.save()
+                    seen_round_ids.add(round_obj.id)
+                else:
+                    round_obj = CompetitionRound.objects.create(competition=competition, **item)
+                    seen_round_ids.add(round_obj.id)
+
+            removable_rounds = [round_obj for round_id, round_obj in existing_rounds.items() if round_id not in seen_round_ids]
+            blocked_rounds = [
+                round_obj.title
+                for round_obj in removable_rounds
+                if round_obj.submissions.exists() or round_obj.scores.exists() or round_obj.judge_assignments.exists()
+            ]
+            if blocked_rounds:
+                raise serializers.ValidationError({
+                    "rounds": f"Cannot delete rounds with submissions, scores, or judge assignments: {', '.join(blocked_rounds)}."
+                })
+            for round_obj in removable_rounds:
+                round_obj.delete()
 
             rounds = list(competition.rounds.all())
             competition.total_rounds = max(1, len(rounds))
@@ -259,15 +289,52 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
             )
 
         if nested.get("judging_criteria") is not None:
-            competition.judging_criteria.all().delete()
+            existing_criteria = {criterion.id: criterion for criterion in competition.judging_criteria.all()}
+            seen_criterion_ids = set()
             for index, item in enumerate(nested["judging_criteria"]):
+                item = item.copy()
+                criterion_id = item.pop("id", None)
                 item.setdefault("sort_order", index)
-                CompetitionJudgingCriterion.objects.create(competition=competition, **item)
+                if criterion_id and criterion_id in existing_criteria:
+                    criterion = existing_criteria[criterion_id]
+                    for key, value in item.items():
+                        setattr(criterion, key, value)
+                    criterion.save()
+                    seen_criterion_ids.add(criterion.id)
+                else:
+                    criterion = CompetitionJudgingCriterion.objects.create(competition=competition, **item)
+                    seen_criterion_ids.add(criterion.id)
+
+            removable_criteria = [
+                criterion for criterion_id, criterion in existing_criteria.items()
+                if criterion_id not in seen_criterion_ids
+            ]
+            blocked_criteria = [criterion.title for criterion in removable_criteria if criterion.scores.exists()]
+            if blocked_criteria:
+                raise serializers.ValidationError({
+                    "judging_criteria": f"Cannot delete criteria with existing scores: {', '.join(blocked_criteria)}."
+                })
+            for criterion in removable_criteria:
+                criterion.delete()
 
         if nested.get("awards") is not None:
-            competition.awards.all().delete()
+            existing_awards = {award.id: award for award in competition.awards.all()}
+            seen_award_ids = set()
             for item in nested["awards"]:
-                CompetitionAward.objects.create(competition=competition, **item)
+                item = item.copy()
+                award_id = item.pop("id", None)
+                if award_id and award_id in existing_awards:
+                    award = existing_awards[award_id]
+                    for key, value in item.items():
+                        setattr(award, key, value)
+                    award.save()
+                    seen_award_ids.add(award.id)
+                else:
+                    award = CompetitionAward.objects.create(competition=competition, **item)
+                    seen_award_ids.add(award.id)
+            for award_id, award in existing_awards.items():
+                if award_id not in seen_award_ids:
+                    award.delete()
 
 
 class CompetitionMaterialSerializer(serializers.ModelSerializer):

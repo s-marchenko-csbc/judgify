@@ -68,9 +68,10 @@ export function fetchCompetitionSubmissions(id) {
 }
 
 export function submitCompetitionWork(id, payload = {}) {
+  const isFormData = typeof FormData !== "undefined" && payload instanceof FormData;
   return apiRequest(`/competitions/${id}/submissions/`, {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: isFormData ? payload : JSON.stringify(payload),
   });
 }
 

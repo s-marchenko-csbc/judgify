@@ -14,16 +14,41 @@ function optionLabel(t, group, value) {
 
 function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
   const { t } = useLanguage();
+  const openSubmissionRounds = useMemo(() => {
+    const rounds = Array.isArray(competition.rounds) ? competition.rounds : [];
+    const activeRounds = rounds.filter((round) => round.status === "active" && round.submission_required !== false);
+    if (activeRounds.length) return activeRounds;
+    const currentRound = Number(competition.current_round || 0);
+    return rounds.filter((round, index) => index + 1 === currentRound && round.submission_required !== false);
+  }, [competition.current_round, competition.rounds]);
   const canSubmit =
     competition.user_participation_status === "approved" &&
     ["participant", "team_member"].includes(competition.user_participation_role) &&
-    competition.submissions_open;
+    competition.submissions_open &&
+    openSubmissionRounds.length > 0;
   const mySubmissions = judging?.my_submissions || [];
-  const [form, setForm] = useState({ title: "", description: "", repository_url: "", demo_url: "" });
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    repository_url: "",
+    demo_url: "",
+    round_id: "",
+    file: null,
+  });
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
   const updateField = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+
+  useEffect(() => {
+    if (!openSubmissionRounds.length) return;
+    setForm((prev) => (
+      prev.round_id && openSubmissionRounds.some((round) => String(round.id) === String(prev.round_id))
+        ? prev
+        : { ...prev, round_id: String(openSubmissionRounds[0].id) }
+    ));
+  }, [openSubmissionRounds]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -31,8 +56,25 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
     setSaving(true);
     setMessage("");
     try {
-      await onSubmissionCreate(form);
-      setForm({ title: "", description: "", repository_url: "", demo_url: "" });
+      const payload = form.file ? new FormData() : { ...form };
+      if (form.file) {
+        payload.append("title", form.title);
+        payload.append("description", form.description);
+        payload.append("repository_url", form.repository_url);
+        payload.append("demo_url", form.demo_url);
+        payload.append("round_id", form.round_id);
+        payload.append("file", form.file);
+      }
+      await onSubmissionCreate(payload);
+      setForm((prev) => ({
+        title: "",
+        description: "",
+        repository_url: "",
+        demo_url: "",
+        round_id: prev.round_id,
+        file: null,
+      }));
+      setFileInputKey((prev) => prev + 1);
       setMessage(t("judgingTab.submissionSent"));
     } catch (error) {
       setMessage(error?.message || t("judgingTab.submissionSaveError"));
@@ -56,7 +98,13 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
                 <strong>{item.title || item.round_title || t("judgingTab.submissionFallback")}</strong>
                 <small>{item.round_title} - {optionLabel(t, "status", item.status)}</small>
               </div>
-              <span>{item.repository_url || item.demo_url || item.description || t("judgingTab.noExternalLink")}</span>
+              <span>
+                {item.file?.url ? (
+                  <a href={item.file.url} target="_blank" rel="noreferrer">
+                    {item.file.original_name || t("judgingTab.file", { defaultValue: "File" })}
+                  </a>
+                ) : item.repository_url || item.demo_url || item.description || t("judgingTab.noExternalLink")}
+              </span>
             </div>
           ))}
         </div>
@@ -64,6 +112,11 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
 
       {canSubmit && (
         <form className="submission-form" onSubmit={handleSubmit}>
+          <select value={form.round_id} onChange={(event) => updateField("round_id", event.target.value)}>
+            {openSubmissionRounds.map((round) => (
+              <option key={round.id} value={round.id}>{round.title || t("judgingTab.round")}</option>
+            ))}
+          </select>
           <input
             value={form.title}
             onChange={(event) => updateField("title", event.target.value)}
@@ -84,6 +137,12 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
             value={form.demo_url}
             onChange={(event) => updateField("demo_url", event.target.value)}
             placeholder={t("judgingTab.demoUrl")}
+          />
+          <input
+            key={fileInputKey}
+            type="file"
+            onChange={(event) => updateField("file", event.target.files?.[0] || null)}
+            aria-label={t("judgingTab.fileUpload", { defaultValue: "Attach file" })}
           />
           <div className="scorecard-actions">
             <button type="submit" disabled={saving}>{saving ? t("judgingTab.sending") : t("judgingTab.submitWork")}</button>

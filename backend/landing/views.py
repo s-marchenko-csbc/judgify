@@ -24,7 +24,7 @@ from django.utils.decorators import method_decorator
 from django.utils import timezone
 
 from rest_framework import status
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -2138,6 +2138,19 @@ def active_submission_round(competition):
     return competition.rounds.filter(status="active", submission_required=True).order_by("sort_order", "id").first()
 
 
+def submission_round_for_request(competition, data):
+    round_id = data.get("round") or data.get("round_id") or data.get("roundId")
+    if not round_id:
+        return active_submission_round(competition), None
+    try:
+        round_obj = competition.rounds.get(pk=round_id, submission_required=True)
+    except (CompetitionRound.DoesNotExist, ValueError, TypeError):
+        return None, "Selected round is not available for submissions."
+    if round_obj.status != "active":
+        return None, "Selected round is not active for submissions."
+    return round_obj, None
+
+
 def submission_owner_filter(membership):
     if membership.team_id:
         return {"team": membership.team, "participant": None}
@@ -2155,6 +2168,7 @@ def user_submission_queryset(user, competition):
 
 class CompetitionSubmissionsView(APIView):
     permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get(self, request, pk):
         competition = get_object_or_404(Competition, pk=pk)
@@ -2182,7 +2196,9 @@ class CompetitionSubmissionsView(APIView):
         if not membership or membership.status != "approved" or membership.role not in ["participant", "team_member"]:
             return Response({"detail": "Only approved participants can submit work for judging."}, status=status.HTTP_403_FORBIDDEN)
 
-        round_obj = active_submission_round(competition)
+        round_obj, round_error = submission_round_for_request(competition, request.data)
+        if round_error:
+            return Response({"detail": round_error}, status=status.HTTP_400_BAD_REQUEST)
         if not competition.submissions_open or not round_obj:
             return Response({"detail": "Submissions are open only during the active submission round."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2218,7 +2234,26 @@ class CompetitionSubmissionsView(APIView):
 
         file_obj = None
         file_id = request.data.get("file") or request.data.get("file_id")
-        if file_id:
+        uploaded_file = request.FILES.get("file")
+        if uploaded_file:
+            if settings_obj and settings_obj.max_file_size_mb:
+                max_bytes = int(settings_obj.max_file_size_mb) * 1024 * 1024
+                declared_size = getattr(uploaded_file, "size", None)
+                if declared_size and declared_size > max_bytes:
+                    return Response(
+                        {"detail": f"File is too large. Maximum size is {settings_obj.max_file_size_mb} MB."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            try:
+                file_obj = create_uploaded_user_file(
+                    request.user,
+                    uploaded_file,
+                    file_type="submission",
+                    visibility="competition_only",
+                )
+            except ValueError as error:
+                return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        elif file_id:
             file_obj = get_object_or_404(UserFile, pk=file_id, owner=request.user)
 
         submission = CompetitionSubmission.objects.create(
@@ -2722,8 +2757,9 @@ class CompetitionBuilderDetailView(APIView):
             return Response({"detail": "You cannot edit this competition."}, status=status.HTTP_403_FORBIDDEN)
         serializer = CompetitionBuilderSerializer(competition, data=normalize_builder_payload(request.data), partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        competition = serializer.save()
-        ensure_organizer_membership(request.user, competition)
+        with transaction.atomic():
+            competition = serializer.save()
+            ensure_organizer_membership(request.user, competition)
         return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
 
 
