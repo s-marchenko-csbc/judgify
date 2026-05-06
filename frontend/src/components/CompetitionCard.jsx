@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { memo, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toggleSavedCompetition } from "../api/savedApi";
 import { useLanguage } from "../context/LanguageContext";
@@ -97,18 +97,12 @@ function HeartIcon({ filled = false }) {
   );
 }
 
-export default function CompetitionCard({ item, onSavedChange }) {
+function CompetitionCard({ item, onSavedChange, now = Date.now() }) {
   const navigate = useNavigate();
   const { t } = useLanguage();
 
-  const [now, setNow] = useState(Date.now());
   const [saved, setSaved] = useState(Boolean(item.is_saved));
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     setSaved(Boolean(item.is_saved));
@@ -241,3 +235,5 @@ export default function CompetitionCard({ item, onSavedChange }) {
     </div>
   );
 }
+
+export default memo(CompetitionCard);

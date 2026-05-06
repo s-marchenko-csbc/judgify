@@ -628,7 +628,57 @@ class LandingCompetitionsView(APIView):
         elif tab == "completed":
             qs = qs.filter(status__in=["finished", "archived"]).order_by("-ends_at", "-updated_at")
 
-        serializer = CompetitionCardSerializer(qs[:20], many=True, context={"request": request})
+        competitions = list(
+            qs.prefetch_related("rounds", "materials__file", "planned_events")[:20]
+        )
+        serializer_context = {"request": request}
+        if request.user.is_authenticated and competitions:
+            competition_ids = [competition.id for competition in competitions]
+            serializer_context["user_primary_role"] = user_primary_role(request.user)
+            serializer_context["saved_competition_ids"] = set(
+                UserSavedCompetition.objects.filter(
+                    user=request.user,
+                    competition_id__in=competition_ids,
+                ).values_list("competition_id", flat=True)
+            )
+            serializer_context["watched_competition_ids"] = set(
+                UserCompetitionWatch.objects.filter(
+                    user=request.user,
+                    competition_id__in=competition_ids,
+                ).values_list("competition_id", flat=True)
+            )
+            serializer_context["membership_by_competition"] = {
+                membership.competition_id: membership
+                for membership in CompetitionParticipant.objects.filter(
+                    competition_id__in=competition_ids,
+                    user=request.user,
+                ).select_related("team")
+            }
+            join_request_by_competition = {}
+            for join_request in (
+                CompetitionJoinRequest.objects.filter(
+                    competition_id__in=competition_ids,
+                    user=request.user,
+                )
+                .select_related("team")
+                .order_by("competition_id", "-created_at")
+            ):
+                join_request_by_competition.setdefault(join_request.competition_id, join_request)
+            serializer_context["join_request_by_competition"] = join_request_by_competition
+            if request.user.is_staff or request.user.is_superuser or serializer_context["user_primary_role"] == "admin":
+                serializer_context["editable_competition_ids"] = set(competition_ids)
+            elif serializer_context["user_primary_role"] == "organizer":
+                serializer_context["editable_competition_ids"] = set(
+                    CompetitionParticipant.objects.filter(
+                        competition_id__in=competition_ids,
+                        user=request.user,
+                        role="organizer",
+                    ).values_list("competition_id", flat=True)
+                )
+            else:
+                serializer_context["editable_competition_ids"] = set()
+
+        serializer = CompetitionCardSerializer(competitions, many=True, context=serializer_context)
         return Response(serializer.data)
 
 

@@ -35,27 +35,6 @@ const demoAccounts = [
   },
 ];
 
-const PROFILE_STORAGE_KEY = "judgify_profile_state";
-
-function readStoredAccounts() {
-  try {
-    const store = JSON.parse(localStorage.getItem(PROFILE_STORAGE_KEY) || "{}");
-    return Object.values(store)
-      .filter((item) => item && (item.username || item.email || item.displayName))
-      .map((item) => ({
-        accountKey: item.accountKey || (item.email ? `email:${String(item.email).trim().toLowerCase()}:${item.primaryRole || "participant"}` : item.id ? `id:${item.id}` : `local:${item.username || item.displayName}`),
-        id: item.id,
-        email: item.email || "",
-        username: item.username || "",
-        displayName: item.displayName || item.username || item.email || "User",
-        primaryRole: item.primaryRole || "participant",
-        avatarUrl: item.avatarUrl || item.avatar_url || item.avatar?.url || item.links?.avatarDataUrl || "",
-      }));
-  } catch {
-    return [];
-  }
-}
-
 function uniqueAccounts(accounts) {
   const seen = new Set();
   return accounts.filter((account) => {
@@ -92,7 +71,7 @@ function Avatar({ user, t, className = "account-avatar" }) {
 }
 
 function AccountMenu({ user, onProfile, onSwitchAccount, onLogout, style, menuRef, t }) {
-  const switchableAccounts = uniqueAccounts([...(user ? [user] : []), ...readStoredAccounts(), ...demoAccounts]);
+  const switchableAccounts = uniqueAccounts([...(user ? [user] : []), ...demoAccounts]);
   const roleLabel = (role) => t(`roles.${role || "participant"}`, { defaultValue: role || "participant" });
 
   return (

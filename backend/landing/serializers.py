@@ -836,6 +836,8 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
         return CompetitionAnnouncementComment.objects.filter(announcement__competition=obj).count()
 
     def get_is_saved(self, obj):
+        if "saved_competition_ids" in self.context:
+            return obj.id in self.context["saved_competition_ids"]
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
@@ -846,6 +848,8 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
         ).exists()
 
     def get_is_watching(self, obj):
+        if "watched_competition_ids" in self.context:
+            return obj.id in self.context["watched_competition_ids"]
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
@@ -1069,12 +1073,16 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
         ).exists()
 
     def _membership(self, obj):
+        if "membership_by_competition" in self.context:
+            return self.context["membership_by_competition"].get(obj.id)
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return None
         return CompetitionParticipant.objects.filter(competition=obj, user=request.user).select_related("team").first()
 
     def _join_request(self, obj):
+        if "join_request_by_competition" in self.context:
+            return self.context["join_request_by_competition"].get(obj.id)
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return None
@@ -1111,7 +1119,9 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
     def get_can_join(self, obj):
         request = self.context.get("request")
         if request and request.user.is_authenticated:
-            role = getattr(getattr(request.user, "profile", None), "primary_role", "")
+            role = self.context.get("user_primary_role")
+            if role is None:
+                role = getattr(getattr(request.user, "profile", None), "primary_role", "")
             if role != "participant" or request.user.is_staff:
                 return False
         if obj.access_mode == "invite_only":
@@ -1121,10 +1131,14 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
         return self.get_user_participation_status(obj) in ["none", "rejected", "withdrawn"]
 
     def get_can_edit(self, obj):
+        if "editable_competition_ids" in self.context:
+            return obj.id in self.context["editable_competition_ids"]
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
-        role = getattr(getattr(request.user, "profile", None), "primary_role", "")
+        role = self.context.get("user_primary_role")
+        if role is None:
+            role = getattr(getattr(request.user, "profile", None), "primary_role", "")
         if request.user.is_staff or role == "admin":
             return True
         if role != "organizer":

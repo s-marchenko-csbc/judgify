@@ -1,5 +1,8 @@
 import { apiRequest } from "./client";
 
+let landingFiltersCache = null;
+let landingFiltersPromise = null;
+
 function buildQuery(params = {}) {
   const searchParams = new URLSearchParams();
 
@@ -15,7 +18,18 @@ function buildQuery(params = {}) {
 }
 
 export function fetchLandingFilters() {
-  return apiRequest("/landing/filters/");
+  if (landingFiltersCache) return Promise.resolve(landingFiltersCache);
+  if (!landingFiltersPromise) {
+    landingFiltersPromise = apiRequest("/landing/filters/")
+      .then((data) => {
+        landingFiltersCache = data;
+        return data;
+      })
+      .finally(() => {
+        landingFiltersPromise = null;
+      });
+  }
+  return landingFiltersPromise;
 }
 
 export function fetchCompetitions(filters = {}) {

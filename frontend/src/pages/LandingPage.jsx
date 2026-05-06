@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Header from "../components/Header";
 import FiltersSidebar from "../components/FiltersSidebar";
 import CompetitionTabs from "../components/CompetitionTabs";
@@ -35,15 +35,52 @@ function mergeSavedState(items, savedIds) {
   }));
 }
 
+function useDebouncedValue(value, delay = 250) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [value, delay]);
+
+  return debounced;
+}
+
+function usePageTicker(intervalMs = 1000) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") {
+        setNow(Date.now());
+      }
+    };
+    const timer = window.setInterval(tick, intervalMs);
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [intervalMs]);
+
+  return now;
+}
+
 export default function LandingPage() {
-  const { user, login, isAuthenticated } = useAuth();
+  const { user, login, isAuthenticated, authSessionKey } = useAuth();
   const { t } = useLanguage();
 
   const [filters, setFilters] = useState(initialFilters);
+  const debouncedSearch = useDebouncedValue(filters.search, 250);
   const [filterOptions, setFilterOptions] = useState(null);
   const [competitions, setCompetitions] = useState([]);
   const [sidebarData, setSidebarData] = useState(null);
   const [savedIds, setSavedIds] = useState(() => new Set());
+  const savedIdsRef = useRef(savedIds);
+  const loadSeqRef = useRef(0);
+  const now = usePageTicker(1000);
   const [loading, setLoading] = useState(false);
 
   const [authStep, setAuthStep] = useState(null);
@@ -51,7 +88,7 @@ export default function LandingPage() {
 
   const requestFilters = useMemo(
     () => ({
-      search: filters.search,
+      search: debouncedSearch,
       tab: filters.tab,
       status: filters.status,
       event_type: filters.event_type,
@@ -60,30 +97,38 @@ export default function LandingPage() {
       difficulty: filters.difficulty,
       language: filters.language,
     }),
-    [filters]
+    [debouncedSearch, filters.tab, filters.status, filters.event_type, filters.participation_type, filters.industry, filters.difficulty, filters.language]
   );
 
   useEffect(() => {
     fetchLandingFilters().then(setFilterOptions).catch(console.error);
   }, []);
 
+  useEffect(() => {
+    savedIdsRef.current = savedIds;
+  }, [savedIds]);
+
   const refreshCompetitions = useCallback(async ({ showLoader = false } = {}) => {
+    const seq = ++loadSeqRef.current;
     if (showLoader) setLoading(true);
     try {
       const data = await fetchCompetitions(requestFilters);
+      if (seq !== loadSeqRef.current) return;
       setCompetitions((prev) => {
-        const localSaved = new Set(savedIds);
-        prev.forEach((item) => {
-          if (item.is_saved) localSaved.add(item.id);
-        });
+        const localSaved = isAuthenticated ? new Set(savedIdsRef.current) : new Set();
+        if (isAuthenticated) {
+          prev.forEach((item) => {
+            if (item.is_saved) localSaved.add(item.id);
+          });
+        }
         return mergeSavedState(data, localSaved);
       });
     } catch (error) {
       console.error(error);
     } finally {
-      if (showLoader) setLoading(false);
+      if (showLoader && seq === loadSeqRef.current) setLoading(false);
     }
-  }, [requestFilters, savedIds]);
+  }, [isAuthenticated, requestFilters]);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,18 +140,20 @@ export default function LandingPage() {
 
     initialLoad();
     const intervalId = window.setInterval(() => {
-      if (!cancelled) refreshCompetitions({ showLoader: false });
-    }, 5000);
+      if (!cancelled && document.visibilityState === "visible") {
+        refreshCompetitions({ showLoader: false });
+      }
+    }, 60000);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [refreshCompetitions]);
+  }, [authSessionKey, refreshCompetitions]);
 
   useEffect(() => {
-    setCompetitions((prev) => mergeSavedState(prev, savedIds));
-  }, [savedIds]);
+    setCompetitions((prev) => mergeSavedState(prev, isAuthenticated ? savedIds : new Set()));
+  }, [isAuthenticated, savedIds]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -115,8 +162,12 @@ export default function LandingPage() {
       return;
     }
 
+    let cancelled = false;
+    setSidebarData(null);
+    setSavedIds(new Set());
     fetchSidebar()
       .then((data) => {
+        if (cancelled) return;
         const savedList = (data?.saved_competitions || []).slice(0, 6);
         setSidebarData({
           ...data,
@@ -125,7 +176,10 @@ export default function LandingPage() {
         setSavedIds(new Set(savedList.map((item) => item.id)));
       })
       .catch(console.error);
-  }, [isAuthenticated]);
+    return () => {
+      cancelled = true;
+    };
+  }, [authSessionKey, isAuthenticated]);
 
   const handleToggleFilter = (groupName, value) => {
     setFilters((prev) => {
@@ -274,6 +328,7 @@ export default function LandingPage() {
                   <CompetitionCard
                     key={item.id}
                     item={item}
+                    now={now}
                     onSavedChange={handleSavedChange}
                   />
                 ))}

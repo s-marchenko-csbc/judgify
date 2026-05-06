@@ -279,6 +279,7 @@ export function AuthProvider({ children }) {
     () => ({
       user,
       loading,
+      authSessionKey: user ? userKey(user) : "anonymous",
       login,
       logout,
       updateProfile,
