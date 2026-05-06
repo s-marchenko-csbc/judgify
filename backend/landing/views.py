@@ -15,7 +15,7 @@ from django.contrib.auth import authenticate, get_user_model, login, logout, pas
 from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import Q, F, Count, ExpressionWrapper, FloatField
+from django.db.models import Q, F, Count
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.middleware.csrf import get_token
@@ -597,7 +597,11 @@ def serialize_landing_filter_options(language="en", include_hidden=False):
     configs = filter_config_map()
     label_field = "label_uk" if language == "uk" else "label_en"
     result = {}
-    groups = sorted(set(LANDING_FILTER_DEFAULTS.keys()) | {group for group, _ in configs.keys()})
+    groups = sorted(
+        group
+        for group in (set(LANDING_FILTER_DEFAULTS.keys()) | {group for group, _ in configs.keys()})
+        if group != "status"
+    )
     for group in groups:
         items = LANDING_FILTER_DEFAULTS.get(group, [])
         serialized = []
@@ -1236,6 +1240,15 @@ class AdminFilterOptionsView(APIView):
 class LandingCompetitionsView(APIView):
     permission_classes = [AllowAny]
 
+    STATUS_TABS = {
+        "registration_open": ["registration_open"],
+        "active": ["active"],
+        "judging": ["judging"],
+        "upcoming": ["upcoming", "published"],
+        "finished": ["finished"],
+        "archived": ["archived"],
+    }
+
     def get(self, request):
         now = timezone.now()
         base_qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
@@ -1248,8 +1261,7 @@ class LandingCompetitionsView(APIView):
         qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
 
         search = request.query_params.get("search")
-        tab = request.query_params.get("tab") or "trending"
-        statuses = request.query_params.getlist("status")
+        tab = request.query_params.get("tab") or "registration_open"
         event_types = request.query_params.getlist("event_type")
         participation_types = request.query_params.getlist("participation_type")
         access_modes = request.query_params.getlist("access_mode")
@@ -1260,8 +1272,6 @@ class LandingCompetitionsView(APIView):
 
         if search:
             qs = qs.filter(Q(name__icontains=search) | Q(short_description__icontains=search))
-        if statuses:
-            qs = qs.filter(status__in=statuses)
         if event_types:
             qs = qs.filter(event_type__in=event_types)
         if participation_types:
@@ -1277,27 +1287,14 @@ class LandingCompetitionsView(APIView):
         if languages:
             qs = qs.filter(language__in=languages)
 
-        if tab == "active":
-            qs = qs.filter(status__in=["registration_open", "active", "judging"]).order_by("timer_deadline", "starts_at", "name")
-        elif tab == "trending":
-            # Trending is driven by measurable attention: approved participants, views, follows and comments.
-            qs = qs.exclude(status__in=["finished", "archived"]).annotate(
-                attention_score=ExpressionWrapper(
-                    F("participants_count") * 3.0 + F("views_count") + F("followers_count") * 2.0 + F("comments_count") * 0.5,
-                    output_field=FloatField(),
-                )
-            ).order_by("-attention_score", "timer_deadline", "-created_at")
-        elif tab == "new":
-            recently_started = now - timedelta(days=2)
-            qs = qs.exclude(status__in=["finished", "archived"]).filter(
-                Q(status="upcoming") | Q(starts_at__gte=recently_started)
-            ).order_by("starts_at", "-created_at")
-        elif tab == "open_submission":
-            qs = qs.exclude(status__in=["finished", "archived"]).filter(submissions_open=True).order_by("timer_deadline", "-created_at")
-        elif tab == "live_stream":
-            qs = qs.exclude(status__in=["finished", "archived"]).filter(is_live_stream_enabled=True, is_online_now=True).order_by("-created_at")
-        elif tab == "completed":
-            qs = qs.filter(status__in=["finished", "archived"]).order_by("-ends_at", "-updated_at")
+        tab_statuses = self.STATUS_TABS.get(tab, self.STATUS_TABS["registration_open"])
+        qs = qs.filter(status__in=tab_statuses)
+        if tab in ["registration_open", "upcoming"]:
+            qs = qs.order_by("timer_deadline", "starts_at", "-created_at")
+        elif tab in ["active", "judging"]:
+            qs = qs.order_by("timer_deadline", "-trending_score", "name")
+        else:
+            qs = qs.order_by("-ends_at", "-updated_at", "name")
 
         competitions = list(
             qs.prefetch_related("rounds", "materials__file", "planned_events")[:20]

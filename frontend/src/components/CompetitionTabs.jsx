@@ -2,12 +2,12 @@ import React from 'react';
 import { useLanguage } from "../context/LanguageContext";
 
 const tabs = [
+  { key: 'registration_open', labelKey: 'tabs.registration_open' },
   { key: 'active', labelKey: 'tabs.active' },
-  { key: 'trending', labelKey: 'tabs.trending' },
-  { key: 'new', labelKey: 'tabs.new' },
-  { key: 'open_submission', labelKey: 'tabs.open_submission' },
-  { key: 'live_stream', labelKey: 'tabs.live_stream' },
-  { key: 'completed', labelKey: 'tabs.completed' },
+  { key: 'judging', labelKey: 'tabs.judging' },
+  { key: 'upcoming', labelKey: 'tabs.upcoming' },
+  { key: 'finished', labelKey: 'tabs.finished' },
+  { key: 'archived', labelKey: 'tabs.archived' },
 ];
 
 export default function CompetitionTabs({ activeTab, onChange }) {

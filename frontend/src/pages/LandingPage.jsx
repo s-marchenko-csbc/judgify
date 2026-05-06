@@ -19,8 +19,7 @@ import { useLanguage } from "../context/LanguageContext";
 
 const initialFilters = {
   search: "",
-  tab: "active",
-  status: [],
+  tab: "registration_open",
   event_type: [],
   participation_type: [],
   industry: [],
@@ -90,14 +89,13 @@ export default function LandingPage() {
     () => ({
       search: debouncedSearch,
       tab: filters.tab,
-      status: filters.status,
       event_type: filters.event_type,
       participation_type: filters.participation_type,
       industry: filters.industry,
       difficulty: filters.difficulty,
       language: filters.language,
     }),
-    [debouncedSearch, filters.tab, filters.status, filters.event_type, filters.participation_type, filters.industry, filters.difficulty, filters.language]
+    [debouncedSearch, filters.tab, filters.event_type, filters.participation_type, filters.industry, filters.difficulty, filters.language]
   );
 
   useEffect(() => {

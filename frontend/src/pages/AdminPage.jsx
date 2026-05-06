@@ -30,7 +30,7 @@ const roleOptions = ["admin", "organizer", "participant", "viewer"];
 const competitionStatuses = ["draft", "published", "upcoming", "registration_open", "active", "judging", "finished", "archived"];
 const approvalStatuses = ["pending", "approved", "rejected"];
 const visibilityModes = ["public", "unlisted", "private"];
-const filterGroups = ["status", "event_type", "participation_type", "industry", "difficulty", "language", "access_mode"];
+const filterGroups = ["event_type", "participation_type", "industry", "difficulty", "language", "access_mode"];
 
 function formatDate(value, language) {
   if (!value) return "-";

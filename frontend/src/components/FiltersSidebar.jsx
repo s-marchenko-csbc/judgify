@@ -24,15 +24,28 @@ export default function FiltersSidebar({ filterOptions, filters, onToggleFilter,
 
   if (!filterOptions) return null;
 
+  const groups = [
+    { name: "event_type", title: t("filters.eventType") },
+    { name: "participation_type", title: t("filters.participationType") },
+    { name: "industry", title: t("filters.industry") },
+    { name: "difficulty", title: t("filters.difficulty") },
+    { name: "language", title: t("filters.language") },
+  ];
+
   return (
     <aside className="filters-sidebar">
       <h3>{t("filters.title")}</h3>
-      <FilterGroup title={t("filters.status")} items={filterOptions.status} selected={filters.status} onChange={onToggleFilter} name="status" t={t} />
-      <FilterGroup title={t("filters.eventType")} items={filterOptions.event_type} selected={filters.event_type} onChange={onToggleFilter} name="event_type" t={t} />
-      <FilterGroup title={t("filters.participationType")} items={filterOptions.participation_type} selected={filters.participation_type} onChange={onToggleFilter} name="participation_type" t={t} />
-      <FilterGroup title={t("filters.industry")} items={filterOptions.industry} selected={filters.industry} onChange={onToggleFilter} name="industry" t={t} />
-      <FilterGroup title={t("filters.difficulty")} items={filterOptions.difficulty} selected={filters.difficulty} onChange={onToggleFilter} name="difficulty" t={t} />
-      <FilterGroup title={t("filters.language")} items={filterOptions.language || []} selected={filters.language || []} onChange={onToggleFilter} name="language" t={t} />
+      {groups.map((group) => (
+        <FilterGroup
+          key={group.name}
+          title={group.title}
+          items={filterOptions[group.name] || []}
+          selected={filters[group.name] || []}
+          onChange={onToggleFilter}
+          name={group.name}
+          t={t}
+        />
+      ))}
       <button className="reset-btn" onClick={onReset}>{t("filters.reset")}</button>
     </aside>
   );
