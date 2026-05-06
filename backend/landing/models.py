@@ -1089,6 +1089,23 @@ class RecentlyViewedCompetition(models.Model):
         return f"{self.user} viewed {self.competition}"
 
 
+class LandingFilterOption(models.Model):
+    group = models.CharField(max_length=64, db_index=True)
+    value = models.CharField(max_length=64)
+    label_en = models.CharField(max_length=255, blank=True)
+    label_uk = models.CharField(max_length=255, blank=True)
+    is_hidden = models.BooleanField(default=False)
+    sort_order = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("group", "value")
+        ordering = ["group", "sort_order", "value"]
+
+    def __str__(self):
+        return f"{self.group}:{self.value}"
+
+
 class Badge(models.Model):
     code = models.SlugField(unique=True)
     title = models.CharField(max_length=255)

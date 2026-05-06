@@ -101,8 +101,8 @@ export default function LandingPage() {
   );
 
   useEffect(() => {
-    fetchLandingFilters().then(setFilterOptions).catch(console.error);
-  }, []);
+    fetchLandingFilters(language).then(setFilterOptions).catch(console.error);
+  }, [language]);
 
   useEffect(() => {
     savedIdsRef.current = savedIds;

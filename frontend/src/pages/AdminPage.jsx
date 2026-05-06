@@ -2,28 +2,33 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import AccountSwitcher from "../components/AccountSwitcher";
 import BrandLogo from "../components/BrandLogo";
+import { clearLandingFiltersCache } from "../api/landingApi";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 import {
-  createAdminMessages,
+  deleteAdminCompetition,
+  deleteAdminUser,
   fetchAdminCompetitions,
-  fetchAdminMessages,
+  fetchAdminFilters,
   fetchAdminOverview,
   fetchAdminUsers,
   updateAdminCompetition,
+  updateAdminFilter,
   updateAdminUser,
 } from "../api/adminApi";
 
 const tabs = [
   { id: "users", labelKey: "admin.tabs.users" },
   { id: "competitions", labelKey: "admin.tabs.competitions" },
-  { id: "messages", labelKey: "admin.tabs.messages" },
+  { id: "filters", labelKey: "admin.tabs.filters" },
+  { id: "server", labelKey: "admin.tabs.server" },
 ];
 
 const roleOptions = ["admin", "organizer", "participant", "viewer"];
 const competitionStatuses = ["draft", "published", "upcoming", "registration_open", "active", "judging", "finished", "archived"];
 const approvalStatuses = ["pending", "approved", "rejected"];
 const visibilityModes = ["public", "unlisted", "private"];
+const filterGroups = ["status", "event_type", "participation_type", "industry", "difficulty", "language"];
 
 function formatDate(value, language) {
   if (!value) return "-";
@@ -36,8 +41,8 @@ function StatGrid({ stats, t }) {
     ["admin.stats.activeUsers", stats?.activeUsers ?? 0],
     ["admin.stats.competitions", stats?.competitions ?? 0],
     ["admin.stats.pendingCompetitions", stats?.pendingCompetitions ?? 0],
-    ["admin.stats.queuedMessages", stats?.queuedMessages ?? 0],
-    ["admin.stats.failedMessages", stats?.failedMessages ?? 0],
+    ["admin.stats.activeCompetitions", stats?.activeCompetitions ?? 0],
+    ["admin.stats.draftCompetitions", stats?.draftCompetitions ?? 0],
   ];
   return (
     <div className="admin-stat-grid">
@@ -51,7 +56,7 @@ function StatGrid({ stats, t }) {
   );
 }
 
-function UsersPanel({ users, filters, setFilters, onUpdate, t, language }) {
+function UsersPanel({ users, filters, setFilters, onUpdate, onDelete, t, language }) {
   return (
     <section className="admin-panel">
       <div className="admin-panel-header">
@@ -66,7 +71,7 @@ function UsersPanel({ users, filters, setFilters, onUpdate, t, language }) {
       </div>
       <div className="admin-table-wrap">
         <table className="admin-table">
-          <thead><tr><th>{t("admin.users.user")}</th><th>{t("admin.users.role")}</th><th>{t("admin.users.status")}</th><th>{t("admin.users.staff")}</th><th>{t("admin.users.activity")}</th><th /></tr></thead>
+          <thead><tr><th>{t("admin.users.user")}</th><th>{t("admin.users.role")}</th><th>{t("admin.users.status")}</th><th>{t("admin.users.staff")}</th><th>{t("admin.users.activity")}</th><th>{t("admin.actions")}</th></tr></thead>
           <tbody>
             {users.map((user) => (
               <tr key={user.id}>
@@ -79,7 +84,10 @@ function UsersPanel({ users, filters, setFilters, onUpdate, t, language }) {
                 <td><button className={`admin-pill ${user.isActive ? "good" : "muted"}`} onClick={() => onUpdate(user.id, { isActive: !user.isActive })}>{user.isActive ? t("admin.users.active") : t("admin.users.inactive")}</button></td>
                 <td><button className={`admin-pill ${user.isStaff ? "good" : "muted"}`} onClick={() => onUpdate(user.id, { isStaff: !user.isStaff })}>{user.isStaff ? t("admin.users.staffYes") : t("admin.users.staffNo")}</button></td>
                 <td><span>{t("admin.users.competitions", { count: user.competitionsCount })}</span><span>{t("admin.users.requests", { count: user.requestsCount })}</span></td>
-                <td><small>{formatDate(user.dateJoined, language)}</small></td>
+                <td>
+                  <small>{formatDate(user.dateJoined, language)}</small>
+                  <button className="admin-pill danger" type="button" onClick={() => onDelete(user)}>{t("admin.delete")}</button>
+                </td>
               </tr>
             ))}
             {!users.length && (
@@ -94,7 +102,7 @@ function UsersPanel({ users, filters, setFilters, onUpdate, t, language }) {
   );
 }
 
-function CompetitionsPanel({ competitions, filters, setFilters, onUpdate, t }) {
+function CompetitionsPanel({ competitions, filters, setFilters, onUpdate, onDelete, t }) {
   return (
     <section className="admin-panel">
       <div className="admin-panel-header">
@@ -109,7 +117,7 @@ function CompetitionsPanel({ competitions, filters, setFilters, onUpdate, t }) {
       </div>
       <div className="admin-table-wrap">
         <table className="admin-table">
-          <thead><tr><th>{t("admin.competitions.competition")}</th><th>{t("admin.competitions.status")}</th><th>{t("admin.competitions.approval")}</th><th>{t("admin.competitions.visibility")}</th><th>{t("admin.competitions.catalog")}</th><th>{t("admin.competitions.results")}</th></tr></thead>
+          <thead><tr><th>{t("admin.competitions.competition")}</th><th>{t("admin.competitions.status")}</th><th>{t("admin.competitions.approval")}</th><th>{t("admin.competitions.visibility")}</th><th>{t("admin.competitions.catalog")}</th><th>{t("admin.actions")}</th></tr></thead>
           <tbody>
             {competitions.map((competition) => (
               <tr key={competition.id}>
@@ -118,7 +126,10 @@ function CompetitionsPanel({ competitions, filters, setFilters, onUpdate, t }) {
                 <td><select value={competition.organizerApprovalStatus} onChange={(e) => onUpdate(competition.id, { organizerApprovalStatus: e.target.value })}>{approvalStatuses.map((item) => <option key={item} value={item}>{t(`options.status.${item}`)}</option>)}</select></td>
                 <td><select value={competition.visibilityMode} onChange={(e) => onUpdate(competition.id, { visibilityMode: e.target.value })}>{visibilityModes.map((item) => <option key={item} value={item}>{t(`options.visibility_mode.${item}`)}</option>)}</select></td>
                 <td><button className={`admin-pill ${competition.showInCatalog ? "good" : "muted"}`} onClick={() => onUpdate(competition.id, { showInCatalog: !competition.showInCatalog })}>{competition.showInCatalog ? t("admin.competitions.shown") : t("admin.competitions.hidden")}</button></td>
-                <td><button className={`admin-pill ${competition.resultsFrozen ? "warn" : "muted"}`} onClick={() => onUpdate(competition.id, { resultsFrozen: !competition.resultsFrozen })}>{competition.resultsFrozen ? t("admin.competitions.frozen") : t("admin.competitions.open")}</button></td>
+                <td>
+                  <button className={`admin-pill ${competition.resultsFrozen ? "warn" : "muted"}`} onClick={() => onUpdate(competition.id, { resultsFrozen: !competition.resultsFrozen })}>{competition.resultsFrozen ? t("admin.competitions.frozen") : t("admin.competitions.open")}</button>
+                  <button className="admin-pill danger" type="button" onClick={() => onDelete(competition)}>{t("admin.delete")}</button>
+                </td>
               </tr>
             ))}
             {!competitions.length && (
@@ -133,34 +144,133 @@ function CompetitionsPanel({ competitions, filters, setFilters, onUpdate, t }) {
   );
 }
 
-function MessagesPanel({ messages, competitions, onCreate, t }) {
-  const emptyDraft = { targetRole: "", recipients: "", competition: "", subject: "", body: "", status: "draft" };
-  const [draft, setDraft] = useState(emptyDraft);
-  const update = (field, value) => setDraft((prev) => ({ ...prev, [field]: value }));
+function formatUptime(seconds = 0, t) {
+  const value = Number(seconds) || 0;
+  const days = Math.floor(value / 86400);
+  const hours = Math.floor((value % 86400) / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  if (days > 0) return t("admin.server.uptimeDays", { days, hours });
+  if (hours > 0) return t("admin.server.uptimeHours", { hours, minutes });
+  return t("admin.server.uptimeMinutes", { minutes });
+}
+
+function metricValue(value, fallback = "-") {
+  return value === null || value === undefined || value === "" ? fallback : value;
+}
+
+function ServerPanel({ server, onRefresh, t, language }) {
+  const memory = server?.memory || {};
+  const disk = server?.disk || {};
+  const loadAverage = Array.isArray(server?.loadAverage) && server.loadAverage.length
+    ? server.loadAverage.join(" / ")
+    : "-";
+  const cards = [
+    [t("admin.server.uptime"), formatUptime(server?.uptimeSeconds, t)],
+    [t("admin.server.databaseLatency"), `${metricValue(server?.databaseLatencyMs)} ms`],
+    [t("admin.server.processMemory"), `${metricValue(server?.processMemoryMb)} MB`],
+    [t("admin.server.memoryUsed"), memory.usedPercent === undefined ? "-" : `${memory.usedPercent}%`],
+    [t("admin.server.diskUsed"), disk.usedPercent === undefined ? "-" : `${disk.usedPercent}%`],
+    [t("admin.server.loadAverage"), loadAverage],
+  ];
+
   return (
-    <section className="admin-panel admin-messages-grid">
-      <form className="admin-message-form" onSubmit={(event) => { event.preventDefault(); onCreate(draft).then(() => setDraft(emptyDraft)); }}>
-        <h2>{t("admin.messages.create")}</h2>
-        <div className="admin-form-grid">
-          <label>{t("admin.messages.targetRole")}<select value={draft.targetRole} onChange={(e) => update("targetRole", e.target.value)}><option value="">{t("admin.messages.manualRecipients")}</option><option value="all">{t("admin.messages.allUsers")}</option>{roleOptions.map((role) => <option key={role} value={role}>{t(`roles.${role}`)}</option>)}</select></label>
-          <label>{t("admin.messages.competition")}<select value={draft.competition} onChange={(e) => update("competition", e.target.value)}><option value="">{t("admin.messages.noCompetition")}</option>{competitions.map((competition) => <option key={competition.id} value={competition.id}>{competition.name}</option>)}</select></label>
-          <label>{t("admin.messages.status")}<select value={draft.status} onChange={(e) => update("status", e.target.value)}><option value="queued">{t("admin.messages.queued")}</option><option value="draft">{t("admin.messages.draft")}</option></select></label>
+    <section className="admin-panel admin-server-panel">
+      <div className="admin-panel-header">
+        <div>
+          <h2>{t("admin.server.title")}</h2>
+          <p>{server?.serverTime ? formatDate(server.serverTime, language) : t("admin.server.waiting")}</p>
         </div>
-        <label>{t("admin.messages.manualRecipients")}<input value={draft.recipients} onChange={(e) => update("recipients", e.target.value)} placeholder={t("admin.messages.recipientsPlaceholder")} /></label>
-        <label>{t("admin.messages.subject")}<input value={draft.subject} onChange={(e) => update("subject", e.target.value)} required /></label>
-        <label>{t("admin.messages.body")}<textarea value={draft.body} onChange={(e) => update("body", e.target.value)} rows={6} required /></label>
-        <button className="admin-primary-btn" type="submit">{t("admin.messages.create")}</button>
-      </form>
-      <div className="admin-message-list">
-        <h2>{t("admin.messages.recent")}</h2>
-        {messages.map((message) => (
-          <div className="admin-message-item" key={message.id}>
-            <strong>{message.subject}</strong>
-            <span>{message.recipientEmail} - {message.status}</span>
-            <p>{message.competitionName || t("admin.messages.general")}</p>
+        <button className="admin-primary-btn compact" type="button" onClick={onRefresh}>{t("admin.server.refresh")}</button>
+      </div>
+      <div className="admin-server-grid">
+        {cards.map(([label, value]) => (
+          <div className="admin-server-metric" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
           </div>
         ))}
-        {!messages.length && <p className="admin-empty">{t("admin.messages.empty")}</p>}
+      </div>
+      <dl className="admin-server-details">
+        <div><dt>{t("admin.server.platform")}</dt><dd>{server?.platform || "-"}</dd></div>
+        <div><dt>{t("admin.server.python")}</dt><dd>{server?.pythonVersion || "-"}</dd></div>
+        <div><dt>{t("admin.server.django")}</dt><dd>{server?.djangoVersion || "-"}</dd></div>
+        <div><dt>{t("admin.server.cpu")}</dt><dd>{server?.cpuCount || "-"}</dd></div>
+        <div><dt>{t("admin.server.memory")}</dt><dd>{memory.totalMb ? `${memory.usedMb} / ${memory.totalMb} MB` : "-"}</dd></div>
+        <div><dt>{t("admin.server.disk")}</dt><dd>{disk.totalMb ? `${disk.usedMb} / ${disk.totalMb} MB` : "-"}</dd></div>
+      </dl>
+    </section>
+  );
+}
+
+function FiltersPanel({ filterConfig, onLocalChange, onSave, t }) {
+  const rows = filterGroups.flatMap((group) =>
+    (filterConfig?.[group] || []).map((item) => ({ ...item, group }))
+  );
+  return (
+    <section className="admin-panel">
+      <div className="admin-panel-header">
+        <div>
+          <h2>{t("admin.filters.title")}</h2>
+          <p>{t("admin.filters.subtitle")}</p>
+        </div>
+      </div>
+      <div className="admin-table-wrap">
+        <table className="admin-table admin-filter-table">
+          <thead>
+            <tr>
+              <th>{t("admin.filters.group")}</th>
+              <th>{t("admin.filters.value")}</th>
+              <th>{t("admin.filters.labelEn")}</th>
+              <th>{t("admin.filters.labelUk")}</th>
+              <th>{t("admin.filters.order")}</th>
+              <th>{t("admin.filters.visibility")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((item) => (
+              <tr key={`${item.group}:${item.value}`}>
+                <td><strong>{t(`filters.groups.${item.group}`, { defaultValue: item.group })}</strong></td>
+                <td><span>{item.value}</span></td>
+                <td>
+                  <input
+                    value={item.labelEn || ""}
+                    placeholder={item.defaultLabelEn}
+                    onChange={(event) => onLocalChange(item.group, item.value, { labelEn: event.target.value })}
+                    onBlur={() => onSave(item)}
+                  />
+                </td>
+                <td>
+                  <input
+                    value={item.labelUk || ""}
+                    placeholder={item.defaultLabelUk}
+                    onChange={(event) => onLocalChange(item.group, item.value, { labelUk: event.target.value })}
+                    onBlur={() => onSave(item)}
+                  />
+                </td>
+                <td>
+                  <input
+                    className="admin-order-input"
+                    type="number"
+                    min="0"
+                    value={item.sortOrder}
+                    onChange={(event) => onLocalChange(item.group, item.value, { sortOrder: event.target.value })}
+                    onBlur={() => onSave(item)}
+                  />
+                </td>
+                <td>
+                  <button className={`admin-pill ${item.hidden ? "muted" : "good"}`} type="button" onClick={() => onSave({ ...item, hidden: !item.hidden })}>
+                    {item.hidden ? t("admin.filters.hidden") : t("admin.filters.visible")}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!rows.length && (
+              <tr>
+                <td colSpan={6}>{t("admin.filters.empty")}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </section>
   );
@@ -174,7 +284,7 @@ export default function AdminPage() {
   const [overview, setOverview] = useState(null);
   const [users, setUsers] = useState([]);
   const [competitions, setCompetitions] = useState([]);
-  const [messages, setMessages] = useState([]);
+  const [filterConfig, setFilterConfig] = useState(null);
   const [userFilters, setUserFilters] = useState({ search: "", role: "" });
   const [competitionFilters, setCompetitionFilters] = useState({ search: "", status: "" });
   const [busy, setBusy] = useState(false);
@@ -184,7 +294,7 @@ export default function AdminPage() {
   const loadOverview = useCallback(async () => setOverview(await fetchAdminOverview()), []);
   const loadUsers = useCallback(async () => setUsers(await fetchAdminUsers(userFilters)), [userFilters]);
   const loadCompetitions = useCallback(async () => setCompetitions(await fetchAdminCompetitions(competitionFilters)), [competitionFilters]);
-  const loadMessages = useCallback(async () => setMessages(await fetchAdminMessages()), []);
+  const loadFilters = useCallback(async () => setFilterConfig(await fetchAdminFilters()), []);
 
   useEffect(() => {
     if (!canAdmin) return;
@@ -204,9 +314,15 @@ export default function AdminPage() {
   }, [canAdmin, loadCompetitions]);
 
   useEffect(() => {
+    if (!canAdmin) return undefined;
+    const timer = window.setInterval(() => loadOverview().catch(console.error), 30000);
+    return () => window.clearInterval(timer);
+  }, [canAdmin, loadOverview]);
+
+  useEffect(() => {
     if (!canAdmin) return;
-    loadMessages().catch(console.error);
-  }, [canAdmin, loadMessages]);
+    loadFilters().catch(console.error);
+  }, [canAdmin, loadFilters]);
 
   const updateUser = async (id, payload) => {
     setBusy(true);
@@ -230,26 +346,68 @@ export default function AdminPage() {
     }
   };
 
-  const createMessages = async (draft) => {
+  const removeUser = async (target) => {
+    const confirmed = window.confirm(t("admin.users.confirmDelete", { name: target.displayName || target.email || target.username }));
+    if (!confirmed) return;
     setBusy(true);
     try {
-      await createAdminMessages({
-        ...draft,
-        recipientEmails: draft.recipients,
-        competition: draft.competition || undefined,
-      });
-      await Promise.all([loadMessages(), loadOverview()]);
+      await deleteAdminUser(target.id);
+      setUsers((prev) => prev.filter((item) => item.id !== target.id));
+      await loadOverview();
     } finally {
       setBusy(false);
     }
   };
 
-  let body = <UsersPanel users={users} filters={userFilters} setFilters={setUserFilters} onUpdate={updateUser} t={t} language={language} />;
+  const removeCompetition = async (competition) => {
+    const confirmed = window.confirm(t("admin.competitions.confirmDelete", { name: competition.name }));
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      await deleteAdminCompetition(competition.id);
+      setCompetitions((prev) => prev.filter((item) => item.id !== competition.id));
+      await loadOverview();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateFilterLocal = (group, value, patch) => {
+    setFilterConfig((prev) => ({
+      ...(prev || {}),
+      [group]: (prev?.[group] || []).map((item) => (
+        item.value === value ? { ...item, ...patch } : item
+      )),
+    }));
+  };
+
+  const saveFilter = async (item) => {
+    setBusy(true);
+    try {
+      const updated = await updateAdminFilter({
+        group: item.group,
+        value: item.value,
+        labelEn: item.labelEn,
+        labelUk: item.labelUk,
+        hidden: item.hidden,
+        sortOrder: item.sortOrder,
+      });
+      setFilterConfig(updated);
+      clearLandingFiltersCache();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  let body = <UsersPanel users={users} filters={userFilters} setFilters={setUserFilters} onUpdate={updateUser} onDelete={removeUser} t={t} language={language} />;
   if (activeTab === "competitions") {
-    body = <CompetitionsPanel competitions={competitions} filters={competitionFilters} setFilters={setCompetitionFilters} onUpdate={updateCompetition} t={t} />;
+    body = <CompetitionsPanel competitions={competitions} filters={competitionFilters} setFilters={setCompetitionFilters} onUpdate={updateCompetition} onDelete={removeCompetition} t={t} />;
   }
-  if (activeTab === "messages") {
-    body = <MessagesPanel messages={messages} competitions={competitions} onCreate={createMessages} t={t} />;
+  if (activeTab === "filters") {
+    body = <FiltersPanel filterConfig={filterConfig} onLocalChange={updateFilterLocal} onSave={saveFilter} t={t} />;
+  }
+  if (activeTab === "server") {
+    body = <ServerPanel server={overview?.server} onRefresh={loadOverview} t={t} language={language} />;
   }
 
   if (!isAuthenticated) return <Navigate to="/" replace />;

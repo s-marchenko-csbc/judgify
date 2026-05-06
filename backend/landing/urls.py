@@ -5,6 +5,7 @@ from .views import (
     HealthCheckView,
     AdminCompetitionDetailView,
     AdminCompetitionsView,
+    AdminFilterOptionsView,
     AdminMessagesView,
     AdminOverviewView,
     AdminUserDetailView,
@@ -53,6 +54,7 @@ urlpatterns = [
     path("admin/users/<int:pk>/", AdminUserDetailView.as_view(), name="admin-user-detail"),
     path("admin/competitions/", AdminCompetitionsView.as_view(), name="admin-competitions"),
     path("admin/competitions/<int:pk>/", AdminCompetitionDetailView.as_view(), name="admin-competition-detail"),
+    path("admin/filters/", AdminFilterOptionsView.as_view(), name="admin-filters"),
     path("admin/messages/", AdminMessagesView.as_view(), name="admin-messages"),
     # auth/session
     path("auth/csrf/", CsrfView.as_view(), name="auth-csrf"),

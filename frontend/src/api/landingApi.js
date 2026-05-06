@@ -1,7 +1,7 @@
 import { apiRequest } from "./client";
 
-let landingFiltersCache = null;
-let landingFiltersPromise = null;
+const landingFiltersCache = new Map();
+const landingFiltersPromises = new Map();
 
 function buildQuery(params = {}) {
   const searchParams = new URLSearchParams();
@@ -17,19 +17,25 @@ function buildQuery(params = {}) {
   return searchParams.toString();
 }
 
-export function fetchLandingFilters() {
-  if (landingFiltersCache) return Promise.resolve(landingFiltersCache);
-  if (!landingFiltersPromise) {
-    landingFiltersPromise = apiRequest("/landing/filters/")
+export function fetchLandingFilters(language = "en") {
+  const cacheKey = language === "uk" ? "uk" : "en";
+  if (landingFiltersCache.has(cacheKey)) return Promise.resolve(landingFiltersCache.get(cacheKey));
+  if (!landingFiltersPromises.has(cacheKey)) {
+    landingFiltersPromises.set(cacheKey, apiRequest(`/landing/filters/?lang=${cacheKey}`)
       .then((data) => {
-        landingFiltersCache = data;
+        landingFiltersCache.set(cacheKey, data);
         return data;
       })
       .finally(() => {
-        landingFiltersPromise = null;
-      });
+        landingFiltersPromises.delete(cacheKey);
+      }));
   }
-  return landingFiltersPromise;
+  return landingFiltersPromises.get(cacheKey);
+}
+
+export function clearLandingFiltersCache() {
+  landingFiltersCache.clear();
+  landingFiltersPromises.clear();
 }
 
 export function fetchCompetitions(filters = {}) {

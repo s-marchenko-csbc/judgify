@@ -1,9 +1,15 @@
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 import hashlib
+import os
+import platform
 import secrets
+import shutil
+import sys
+import time
 import uuid
 
+from django import get_version as get_django_version
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout, password_validation
 from django.core.cache import cache
@@ -47,6 +53,7 @@ from .models import (
     RecentlyViewedCompetition,
     RecentlyViewedMaterial,
     CompetitionMaterial,
+    LandingFilterOption,
     UserBadge,
     Certificate,
     UserMaterial,
@@ -79,6 +86,8 @@ from .serializers import (
     CertificateSerializer,
     UserMaterialSerializer,
 )
+
+PROCESS_STARTED_AT = time.time()
 
 
 
@@ -411,6 +420,178 @@ def ensure_admin_request(request):
     return None
 
 
+def read_memory_info():
+    info = {}
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                key, value = line.split(":", 1)
+                amount = int(value.strip().split()[0]) * 1024
+                info[key] = amount
+    except (OSError, ValueError):
+        return {}
+
+    total = info.get("MemTotal")
+    available = info.get("MemAvailable") or info.get("MemFree")
+    if not total or available is None:
+        return {}
+    used = max(total - available, 0)
+    return {
+        "totalMb": round(total / 1024 / 1024, 1),
+        "availableMb": round(available / 1024 / 1024, 1),
+        "usedMb": round(used / 1024 / 1024, 1),
+        "usedPercent": round((used / total) * 100, 1),
+    }
+
+
+def process_memory_mb():
+    try:
+        import resource
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform == "darwin":
+            usage = usage / 1024 / 1024
+        else:
+            usage = usage / 1024
+        return round(usage, 1)
+    except Exception:
+        return None
+
+
+def serialize_server_metrics(db_latency_ms=None):
+    disk = shutil.disk_usage(os.getcwd())
+    load_average = []
+    if hasattr(os, "getloadavg"):
+        try:
+            load_average = [round(value, 2) for value in os.getloadavg()]
+        except OSError:
+            load_average = []
+    return {
+        "serverTime": timezone.now(),
+        "uptimeSeconds": int(time.time() - PROCESS_STARTED_AT),
+        "pythonVersion": platform.python_version(),
+        "djangoVersion": get_django_version(),
+        "platform": platform.platform(),
+        "cpuCount": os.cpu_count() or 0,
+        "loadAverage": load_average,
+        "processMemoryMb": process_memory_mb(),
+        "memory": read_memory_info(),
+        "disk": {
+            "totalMb": round(disk.total / 1024 / 1024, 1),
+            "usedMb": round(disk.used / 1024 / 1024, 1),
+            "freeMb": round(disk.free / 1024 / 1024, 1),
+            "usedPercent": round((disk.used / disk.total) * 100, 1) if disk.total else 0,
+        },
+        "databaseLatencyMs": db_latency_ms,
+    }
+
+
+LANDING_FILTER_DEFAULTS = {
+    "status": [
+        {"value": "upcoming", "label_en": "Upcoming", "label_uk": "Незабаром"},
+        {"value": "registration_open", "label_en": "Registration open", "label_uk": "Реєстрація відкрита"},
+        {"value": "active", "label_en": "Active", "label_uk": "Активні"},
+        {"value": "finished", "label_en": "Finished", "label_uk": "Завершено"},
+        {"value": "judging", "label_en": "Judging", "label_uk": "Оцінювання"},
+        {"value": "archived", "label_en": "Archived", "label_uk": "Архів"},
+    ],
+    "event_type": [
+        {"value": "online", "label_en": "Online", "label_uk": "Онлайн"},
+        {"value": "offline", "label_en": "Offline", "label_uk": "Офлайн"},
+        {"value": "hybrid", "label_en": "Hybrid", "label_uk": "Гібридний"},
+    ],
+    "participation_type": [
+        {"value": "individual", "label_en": "Individual", "label_uk": "Індивідуальна"},
+        {"value": "team", "label_en": "Team", "label_uk": "Командна"},
+        {"value": "mixed", "label_en": "Mixed", "label_uk": "Змішана"},
+    ],
+    "access_mode": [
+        {"value": "open", "label_en": "Open registration", "label_uk": "Відкрита реєстрація"},
+        {"value": "application", "label_en": "Application review", "label_uk": "Розгляд заявок"},
+        {"value": "invite_only", "label_en": "Invite only", "label_uk": "Лише запрошення"},
+    ],
+    "visibility_mode": [
+        {"value": "public", "label_en": "Public catalog", "label_uk": "Публічний каталог"},
+        {"value": "unlisted", "label_en": "Unlisted link", "label_uk": "Доступ за посиланням"},
+        {"value": "private", "label_en": "Private", "label_uk": "Приватне"},
+    ],
+    "industry": [
+        {"value": "programming", "label_en": "Programming", "label_uk": "Програмування"},
+        {"value": "design", "label_en": "Design", "label_uk": "Дизайн"},
+        {"value": "robotics", "label_en": "Robotics", "label_uk": "Робототехніка"},
+        {"value": "cybersecurity", "label_en": "Cybersecurity", "label_uk": "Кібербезпека"},
+    ],
+    "difficulty": [
+        {"value": "beginner", "label_en": "Beginner", "label_uk": "Початковий"},
+        {"value": "intermediate", "label_en": "Intermediate", "label_uk": "Середній"},
+        {"value": "advanced", "label_en": "Advanced", "label_uk": "Просунутий"},
+        {"value": "mixed", "label_en": "Mixed", "label_uk": "Змішаний"},
+    ],
+    "language": [
+        {"value": "uk", "label_en": "Ukrainian", "label_uk": "Українська"},
+        {"value": "en", "label_en": "English", "label_uk": "Англійська"},
+        {"value": "pl", "label_en": "Polish", "label_uk": "Польська"},
+        {"value": "de", "label_en": "German", "label_uk": "Німецька"},
+        {"value": "fr", "label_en": "French", "label_uk": "Французька"},
+        {"value": "es", "label_en": "Spanish", "label_uk": "Іспанська"},
+        {"value": "other", "label_en": "Other", "label_uk": "Інша"},
+    ],
+}
+
+
+def ensure_landing_filter_configs():
+    existing = set(LandingFilterOption.objects.values_list("group", "value"))
+    to_create = []
+    for group, items in LANDING_FILTER_DEFAULTS.items():
+        for index, item in enumerate(items):
+            key = (group, item["value"])
+            if key in existing:
+                continue
+            to_create.append(LandingFilterOption(
+                group=group,
+                value=item["value"],
+                label_en=item["label_en"],
+                label_uk=item["label_uk"],
+                sort_order=index,
+            ))
+    if to_create:
+        LandingFilterOption.objects.bulk_create(to_create, ignore_conflicts=True)
+
+
+def filter_config_map():
+    return {
+        (item.group, item.value): item
+        for item in LandingFilterOption.objects.all()
+    }
+
+
+def serialize_landing_filter_options(language="en", include_hidden=False):
+    configs = filter_config_map()
+    label_field = "label_uk" if language == "uk" else "label_en"
+    result = {}
+    for group, items in LANDING_FILTER_DEFAULTS.items():
+        serialized = []
+        for index, default in enumerate(items):
+            config = configs.get((group, default["value"]))
+            hidden = bool(config.is_hidden) if config else False
+            if hidden and not include_hidden:
+                continue
+            label = getattr(config, label_field, "") if config else ""
+            fallback = default.get(label_field) or default["label_en"]
+            serialized.append({
+                "group": group,
+                "value": default["value"],
+                "label": label or fallback,
+                "labelEn": (config.label_en if config else "") or default["label_en"],
+                "labelUk": (config.label_uk if config else "") or default["label_uk"],
+                "defaultLabelEn": default["label_en"],
+                "defaultLabelUk": default["label_uk"],
+                "hidden": hidden,
+                "sortOrder": config.sort_order if config else index,
+            })
+        result[group] = sorted(serialized, key=lambda item: (item["sortOrder"], item["value"]))
+    return result
+
+
 @method_decorator(ensure_csrf_cookie, name="dispatch")
 class CsrfView(APIView):
     permission_classes = [AllowAny]
@@ -639,15 +820,21 @@ class AdminOverviewView(APIView):
         if denied:
             return denied
 
+        db_started = time.perf_counter()
+        users_count = get_user_model().objects.count()
+        db_latency_ms = round((time.perf_counter() - db_started) * 1000, 1)
         return Response({
             "stats": {
-                "users": get_user_model().objects.count(),
+                "users": users_count,
                 "activeUsers": get_user_model().objects.filter(is_active=True).count(),
                 "competitions": Competition.objects.count(),
                 "pendingCompetitions": Competition.objects.filter(organizer_approval_status="pending").count(),
+                "activeCompetitions": Competition.objects.filter(status__in=["published", "upcoming", "registration_open", "active", "judging"]).count(),
+                "draftCompetitions": Competition.objects.filter(status="draft").count(),
                 "queuedMessages": OutboundMessage.objects.filter(status="queued").count(),
                 "failedMessages": OutboundMessage.objects.filter(status="failed").count(),
             },
+            "server": serialize_server_metrics(db_latency_ms=db_latency_ms),
             "recentMessages": [
                 serialize_admin_message(message)
                 for message in OutboundMessage.objects.select_related("competition").order_by("-created_at")[:8]
@@ -683,6 +870,17 @@ class AdminUsersView(APIView):
 
 class AdminUserDetailView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+        User = get_user_model()
+        target = get_object_or_404(User, pk=pk)
+        if target.id == request.user.id:
+            return Response({"detail": "You cannot delete your own administrator account."}, status=status.HTTP_400_BAD_REQUEST)
+        target.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def patch(self, request, pk):
         denied = ensure_admin_request(request)
@@ -764,6 +962,14 @@ class AdminCompetitionsView(APIView):
 
 class AdminCompetitionDetailView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+        competition = get_object_or_404(Competition, pk=pk)
+        competition.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def patch(self, request, pk):
         denied = ensure_admin_request(request)
@@ -867,6 +1073,58 @@ class AdminMessagesView(APIView):
         ]
         created = OutboundMessage.objects.bulk_create(messages)
         return Response([serialize_admin_message(message) for message in created], status=status.HTTP_201_CREATED)
+
+
+class AdminFilterOptionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+        ensure_landing_filter_configs()
+        return Response(serialize_landing_filter_options(language="en", include_hidden=True))
+
+    def patch(self, request):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+        group = (request.data.get("group") or "").strip()
+        value = (request.data.get("value") or "").strip()
+        defaults_by_group = {
+            item["value"]: item
+            for item in LANDING_FILTER_DEFAULTS.get(group, [])
+        }
+        if value not in defaults_by_group:
+            return Response({"detail": "Unsupported landing filter option."}, status=status.HTTP_400_BAD_REQUEST)
+
+        default = defaults_by_group[value]
+        option, _ = LandingFilterOption.objects.get_or_create(
+            group=group,
+            value=value,
+            defaults={
+                "label_en": default["label_en"],
+                "label_uk": default["label_uk"],
+                "sort_order": next(
+                    index
+                    for index, item in enumerate(LANDING_FILTER_DEFAULTS[group])
+                    if item["value"] == value
+                ),
+            },
+        )
+        if "labelEn" in request.data:
+            option.label_en = (request.data.get("labelEn") or "").strip()[:255] or default["label_en"]
+        if "labelUk" in request.data:
+            option.label_uk = (request.data.get("labelUk") or "").strip()[:255] or default["label_uk"]
+        if "hidden" in request.data:
+            option.is_hidden = bool(request.data.get("hidden"))
+        if "sortOrder" in request.data:
+            try:
+                option.sort_order = max(0, int(request.data.get("sortOrder")))
+            except (TypeError, ValueError):
+                return Response({"detail": "Sort order must be a number."}, status=status.HTTP_400_BAD_REQUEST)
+        option.save()
+        return Response(serialize_landing_filter_options(language="en", include_hidden=True))
 
 
 class LandingCompetitionsView(APIView):
@@ -1040,57 +1298,9 @@ class LandingFiltersView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        return Response({
-            "status": [
-                {"value": "upcoming", "label": "Upcoming"},
-                {"value": "registration_open", "label": "Registration open"},
-                {"value": "active", "label": "Active"},
-                {"value": "finished", "label": "Finished"},
-                {"value": "judging", "label": "Judging"},
-                {"value": "archived", "label": "Archived"},
-            ],
-            "event_type": [
-                {"value": "online", "label": "Online"},
-                {"value": "offline", "label": "Offline"},
-                {"value": "hybrid", "label": "Hybrid"},
-            ],
-            "participation_type": [
-                {"value": "individual", "label": "Individual"},
-                {"value": "team", "label": "Team"},
-                {"value": "mixed", "label": "Mixed"},
-            ],
-            "access_mode": [
-                {"value": "open", "label": "Open registration"},
-                {"value": "application", "label": "Application review"},
-                {"value": "invite_only", "label": "Invite only"},
-            ],
-            "visibility_mode": [
-                {"value": "public", "label": "Public catalog"},
-                {"value": "unlisted", "label": "Unlisted link"},
-                {"value": "private", "label": "Private"},
-            ],
-            "industry": [
-                {"value": "programming", "label": "Programming"},
-                {"value": "design", "label": "Design"},
-                {"value": "robotics", "label": "Robotics"},
-                {"value": "cybersecurity", "label": "Cybersecurity"},
-            ],
-            "difficulty": [
-                {"value": "beginner", "label": "Beginner"},
-                {"value": "intermediate", "label": "Intermediate"},
-                {"value": "advanced", "label": "Advanced"},
-                {"value": "mixed", "label": "Mixed"},
-            ],
-            "language": [
-                {"value": "uk", "label": "Ukrainian"},
-                {"value": "en", "label": "English"},
-                {"value": "pl", "label": "Polish"},
-                {"value": "de", "label": "German"},
-                {"value": "fr", "label": "French"},
-                {"value": "es", "label": "Spanish"},
-                {"value": "other", "label": "Other"},
-            ],
-        })
+        language = request.query_params.get("lang") or request.query_params.get("language") or "en"
+        language = "uk" if language == "uk" else "en"
+        return Response(serialize_landing_filter_options(language=language, include_hidden=False))
 
 
 class CompetitionDetailView(APIView):

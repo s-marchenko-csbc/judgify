@@ -12,7 +12,7 @@ function FilterGroup({ title, items, selected, onChange, name, t }) {
             checked={selected.includes(item.value)}
             onChange={() => onChange(name, item.value)}
           />
-          {t(`options.${name}.${item.value}`, { defaultValue: item.label })}
+          {item.label || t(`options.${name}.${item.value}`, { defaultValue: item.value })}
         </label>
       ))}
     </div>

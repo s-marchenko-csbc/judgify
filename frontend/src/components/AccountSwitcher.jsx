@@ -42,15 +42,14 @@ function uniqueAccounts(accounts) {
     const role = (account.primaryRole || "participant").trim().toLowerCase();
     const username = (account.username || "").trim().toLowerCase();
     const accountKey = String(account.accountKey || "");
-    const key = accountKey.startsWith("demo:")
-      ? accountKey
-      : email
-        ? `email:${email}:role:${role}`
-        : username
-          ? `username:${username}`
-          : accountKey || account.displayName;
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
+    const identityKeys = [
+      email ? `email:${email}:role:${role}` : "",
+      username ? `username:${username}` : "",
+      accountKey || "",
+      account.displayName ? `name:${String(account.displayName).trim().toLowerCase()}:role:${role}` : "",
+    ].filter(Boolean);
+    if (!identityKeys.length || identityKeys.some((key) => seen.has(key))) return false;
+    identityKeys.forEach((key) => seen.add(key));
     return true;
   });
 }

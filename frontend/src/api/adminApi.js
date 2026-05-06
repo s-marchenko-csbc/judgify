@@ -4,6 +4,17 @@ export function fetchAdminOverview() {
   return apiRequest("/admin/overview/");
 }
 
+export function fetchAdminFilters() {
+  return apiRequest("/admin/filters/");
+}
+
+export function updateAdminFilter(payload = {}) {
+  return apiRequest("/admin/filters/", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchAdminUsers(params = {}) {
   const query = new URLSearchParams();
   if (params.search) query.set("search", params.search);
@@ -18,6 +29,12 @@ export function updateAdminUser(id, payload = {}) {
   });
 }
 
+export function deleteAdminUser(id) {
+  return apiRequest(`/admin/users/${id}/`, {
+    method: "DELETE",
+  });
+}
+
 export function fetchAdminCompetitions(params = {}) {
   const query = new URLSearchParams();
   if (params.search) query.set("search", params.search);
@@ -29,6 +46,12 @@ export function updateAdminCompetition(id, payload = {}) {
   return apiRequest(`/admin/competitions/${id}/`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export function deleteAdminCompetition(id) {
+  return apiRequest(`/admin/competitions/${id}/`, {
+    method: "DELETE",
   });
 }
 
