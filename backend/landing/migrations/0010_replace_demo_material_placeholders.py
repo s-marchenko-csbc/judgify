@@ -142,7 +142,7 @@ def repair_demo_certificates(apps, schema_editor):
     for user_file in demo_files:
         certificate = Certificate.objects.filter(file_id=user_file.id).select_related("competition", "user").first()
         title = certificate.title if certificate else user_file.original_name
-        owner_name = certificate.user.get_username() if certificate and certificate.user_id else "participant"
+        owner_name = getattr(certificate.user, "username", "") if certificate and certificate.user_id else "participant"
         competition_name = certificate.competition.name if certificate and certificate.competition_id else "Judgify"
         verification_code = certificate.verification_code if certificate else user_file.storage_key
         content = build_pdf(
