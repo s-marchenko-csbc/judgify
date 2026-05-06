@@ -1239,6 +1239,22 @@ class AdminFilterOptionsView(APIView):
 
 class LandingCompetitionsView(APIView):
     permission_classes = [AllowAny]
+    CACHE_TTL_SECONDS = 30
+    CARD_QUERY_FIELDS = [
+        "id", "slug", "name", "short_description", "cover_image", "status",
+        "event_type", "participation_type", "access_mode", "visibility_mode",
+        "show_in_catalog", "allow_sharing_link", "allow_external_registration",
+        "min_team_size", "max_team_size", "manual_judging_enabled",
+        "automatic_judging_enabled", "peer_review_enabled", "judging_aggregation",
+        "judging_visibility", "results_frozen", "industry", "difficulty",
+        "language", "current_round", "total_rounds", "participants_count",
+        "comments_count", "views_count", "followers_count",
+        "is_live_stream_enabled", "is_online_now", "registration_open",
+        "submissions_open", "trending_score", "registration_starts_at",
+        "registration_ends_at", "starts_at", "ends_at", "judging_starts_at",
+        "judging_ends_at", "results_public_at", "timer_deadline",
+        "created_at", "updated_at",
+    ]
 
     STATUS_TABS = {
         "registration_open": ["registration_open"],
@@ -1251,12 +1267,21 @@ class LandingCompetitionsView(APIView):
 
     def get(self, request):
         now = timezone.now()
-        base_qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
+        is_anonymous = not request.user.is_authenticated
+        cache_key = None
+        if is_anonymous:
+            cache_key = f"landing:competitions:v3:{request.META.get('QUERY_STRING', '')}"
+            cached_payload = cache.get(cache_key)
+            if cached_payload is not None:
+                return Response(cached_payload)
 
         # Keep the database status in sync before filtering. This is intentionally
-        # limited for the demo dataset; in production it should move to a periodic job.
-        for competition in base_qs[:100]:
-            recompute_competition_timing(competition, now=now, save=True)
+        # throttled so a busy landing page does not write the same timing fields
+        # on every tab/search refresh.
+        if cache.add("landing:timing-sync:v1", "1", self.CACHE_TTL_SECONDS):
+            base_qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
+            for competition in base_qs[:100]:
+                recompute_competition_timing(competition, now=now, save=True)
 
         qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
 
@@ -1296,9 +1321,7 @@ class LandingCompetitionsView(APIView):
         else:
             qs = qs.order_by("-ends_at", "-updated_at", "name")
 
-        competitions = list(
-            qs.prefetch_related("rounds", "materials__file", "planned_events")[:20]
-        )
+        competitions = list(qs.only(*self.CARD_QUERY_FIELDS)[:20])
         serializer_context = {"request": request}
         if request.user.is_authenticated and competitions:
             competition_ids = [competition.id for competition in competitions]
@@ -1347,7 +1370,10 @@ class LandingCompetitionsView(APIView):
                 serializer_context["editable_competition_ids"] = set()
 
         serializer = CompetitionCardSerializer(competitions, many=True, context=serializer_context)
-        return Response(serializer.data)
+        payload = list(serializer.data)
+        if cache_key:
+            cache.set(cache_key, payload, self.CACHE_TTL_SECONDS)
+        return Response(payload)
 
 
 class LandingSidebarView(APIView):
@@ -1415,8 +1441,6 @@ class CompetitionDetailView(APIView):
             pk=pk,
             is_public=True,
         )
-        recompute_competition_timing(competition, save=True)
-
         recompute_competition_timing(competition, save=True)
 
         if request.user.is_authenticated:

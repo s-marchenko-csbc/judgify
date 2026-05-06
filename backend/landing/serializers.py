@@ -710,8 +710,6 @@ class UserCompetitionWatchSerializer(serializers.ModelSerializer):
 
 
 class SidebarCompetitionSerializer(serializers.ModelSerializer):
-    comments_count = serializers.SerializerMethodField()
-
     class Meta:
         model = Competition
         fields = [
@@ -725,12 +723,8 @@ class SidebarCompetitionSerializer(serializers.ModelSerializer):
             "language",
         ]
 
-    def get_comments_count(self, obj):
-        return CompetitionAnnouncementComment.objects.filter(announcement__competition=obj).count()
-
 
 class CompetitionCardSerializer(serializers.ModelSerializer):
-    comments_count = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     event_type_label = serializers.CharField(source="get_event_type_display", read_only=True)
     participation_type_label = serializers.CharField(
@@ -748,7 +742,6 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
     user_team = serializers.SerializerMethodField()
     can_join = serializers.SerializerMethodField()
     can_edit = serializers.SerializerMethodField()
-    rounds = CompetitionRoundSerializer(many=True, read_only=True)
 
     class Meta:
         model = Competition
@@ -802,7 +795,6 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
             "judging_ends_at",
             "results_public_at",
             "timer_deadline",
-            "rounds",
             "is_saved",
             "is_watching",
             "user_participation_status",
@@ -837,9 +829,6 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-
-    def get_comments_count(self, obj):
-        return CompetitionAnnouncementComment.objects.filter(announcement__competition=obj).count()
 
     def get_is_saved(self, obj):
         if "saved_competition_ids" in self.context:
@@ -1054,9 +1043,6 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-
-    def get_comments_count(self, obj):
-        return CompetitionAnnouncementComment.objects.filter(announcement__competition=obj).count()
 
     def get_is_saved(self, obj):
         request = self.context.get("request")
