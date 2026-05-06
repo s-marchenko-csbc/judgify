@@ -6,7 +6,9 @@ from .views import (
     UserFileDownloadView,
     CurrentUserView,
     DevLoginView,
+    LoginView,
     LogoutView,
+    RegisterView,
     LandingCompetitionsView,
     LandingSidebarView,
     LandingFiltersView,
@@ -42,6 +44,8 @@ urlpatterns = [
     # auth/session
     path("auth/csrf/", CsrfView.as_view(), name="auth-csrf"),
     path("auth/me/", CurrentUserView.as_view(), name="auth-me"),
+    path("auth/register/", RegisterView.as_view(), name="auth-register"),
+    path("auth/login/", LoginView.as_view(), name="auth-login"),
     path("auth/dev-login/", DevLoginView.as_view(), name="auth-dev-login"),
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
     path("files/<int:pk>/download/", UserFileDownloadView.as_view(), name="file-download"),

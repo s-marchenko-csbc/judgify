@@ -43,10 +43,10 @@ function readStoredAccounts() {
     return Object.values(store)
       .filter((item) => item && (item.username || item.email || item.displayName))
       .map((item) => ({
-        accountKey: item.accountKey || (item.id ? `id:${item.id}` : `local:${item.username || item.email}`),
+        accountKey: item.accountKey || (item.email ? `email:${String(item.email).trim().toLowerCase()}:${item.primaryRole || "participant"}` : item.id ? `id:${item.id}` : `local:${item.username || item.displayName}`),
         id: item.id,
         email: item.email || "",
-        username: item.username || (item.email ? item.email.split("@")[0] : item.displayName),
+        username: item.username || "",
         displayName: item.displayName || item.username || item.email || "User",
         primaryRole: item.primaryRole || "participant",
         avatarUrl: item.avatarUrl || item.avatar_url || item.avatar?.url || item.links?.avatarDataUrl || "",
@@ -59,14 +59,17 @@ function readStoredAccounts() {
 function uniqueAccounts(accounts) {
   const seen = new Set();
   return accounts.filter((account) => {
-    const username = (account.username || "").trim().toLowerCase();
     const email = (account.email || "").trim().toLowerCase();
     const role = (account.primaryRole || "participant").trim().toLowerCase();
-    const key = username
-      ? `username:${username}`
+    const username = (account.username || "").trim().toLowerCase();
+    const accountKey = String(account.accountKey || "");
+    const key = accountKey.startsWith("demo:")
+      ? accountKey
       : email
         ? `email:${email}:role:${role}`
-        : account.accountKey || account.displayName;
+        : username
+          ? `username:${username}`
+          : accountKey || account.displayName;
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -110,18 +113,29 @@ function AccountMenu({ user, onProfile, onSwitchAccount, onLogout, style, menuRe
       <div className="account-menu-divider" />
       <span className="account-menu-caption">{t("account.switchAccount")}</span>
       {switchableAccounts.map((account) => {
-        const isCurrent = account.accountKey === user?.accountKey || account.username === user?.username;
+        const accountEmail = (account.email || "").trim().toLowerCase();
+        const userEmail = (user?.email || "").trim().toLowerCase();
+        const accountRole = account.primaryRole || "participant";
+        const userRole = user?.primaryRole || "participant";
+        const isCurrent =
+          account.accountKey === user?.accountKey ||
+          (account.id && account.id === user?.id) ||
+          (accountEmail && accountEmail === userEmail && accountRole === userRole);
+        const isDemoAccount = String(account.accountKey || "").startsWith("demo:");
+        const requiresPassword = !isCurrent && !isDemoAccount;
         return (
           <button
             type="button"
             className={`account-switch-row ${isCurrent ? "active" : ""}`}
             key={account.accountKey || account.username}
             onClick={() => onSwitchAccount(account)}
+            disabled={requiresPassword}
+            title={requiresPassword ? t("account.signInRequired", { defaultValue: "Sign in with password to switch to this account." }) : undefined}
           >
             <span>{account.displayName.slice(0, 1)}</span>
             <div>
               <strong>{account.displayName}</strong>
-              <small>{roleLabel(account.primaryRole)} - {account.email}</small>
+              <small>{requiresPassword ? t("account.signInRequired", { defaultValue: "Sign in with password to switch to this account." }) : `${roleLabel(account.primaryRole)} - ${account.email}`}</small>
             </div>
             {isCurrent && <em>OK</em>}
           </button>
@@ -182,6 +196,9 @@ export default function AccountSwitcher({ compact = false }) {
   }, [open]);
 
   const switchAccount = async (account) => {
+    if (!String(account.accountKey || "").startsWith("demo:")) {
+      return;
+    }
     await login(account);
     setOpen(false);
   };

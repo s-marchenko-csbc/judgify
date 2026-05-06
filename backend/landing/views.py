@@ -5,7 +5,9 @@ import secrets
 import uuid
 
 from django.conf import settings
-from django.contrib.auth import get_user_model, login, logout
+from django.contrib.auth import authenticate, get_user_model, login, logout, password_validation
+from django.core.cache import cache
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Q, F, ExpressionWrapper, FloatField
 from django.http import HttpResponse
@@ -231,6 +233,93 @@ def user_can_create_competitions(user):
     return user_is_admin(user) or role == "organizer"
 
 
+COMMON_COMPROMISED_PASSWORDS = {
+    "password",
+    "password1",
+    "password123",
+    "qwerty",
+    "qwerty123",
+    "123456",
+    "12345678",
+    "123456789",
+    "111111",
+    "admin123",
+    "letmein",
+    "welcome",
+    "demo12345",
+    "judgify123",
+}
+
+
+def normalize_email(value):
+    return (value or "").strip().lower()
+
+
+def get_client_ip(request):
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "unknown")
+
+
+def auth_attempt_cache_key(request, email):
+    digest = hashlib.sha256(f"{get_client_ip(request)}:{normalize_email(email)}".encode("utf-8")).hexdigest()
+    return f"auth-login-attempts:{digest}"
+
+
+def record_failed_login(request, email):
+    key = auth_attempt_cache_key(request, email)
+    attempts = cache.get(key, 0) + 1
+    cache.set(key, attempts, timeout=15 * 60)
+    return attempts
+
+
+def clear_failed_logins(request, email):
+    cache.delete(auth_attempt_cache_key(request, email))
+
+
+def login_is_rate_limited(request, email):
+    return cache.get(auth_attempt_cache_key(request, email), 0) >= 5
+
+
+def unique_username(base):
+    User = get_user_model()
+    raw = (base or "user").strip()[:140] or "user"
+    username = raw
+    counter = 2
+    while User.objects.filter(username=username).exists():
+        suffix = f"-{counter}"
+        username = f"{raw[:150 - len(suffix)]}{suffix}"
+        counter += 1
+    return username
+
+
+def validate_account_password(password, user=None, email=""):
+    password = password or ""
+    errors = []
+    if len(password) < 12:
+        errors.append("Password must contain at least 12 characters.")
+    if not any(ch.islower() for ch in password):
+        errors.append("Password must contain a lowercase letter.")
+    if not any(ch.isupper() for ch in password):
+        errors.append("Password must contain an uppercase letter.")
+    if not any(ch.isdigit() for ch in password):
+        errors.append("Password must contain a number.")
+    if not any(not ch.isalnum() for ch in password):
+        errors.append("Password must contain a special character.")
+    normalized = password.strip().lower()
+    if normalized in COMMON_COMPROMISED_PASSWORDS:
+        errors.append("This password is too common or previously compromised.")
+    email_name = normalize_email(email).split("@")[0]
+    if email_name and len(email_name) >= 4 and email_name in normalized:
+        errors.append("Password must not contain your email name.")
+    try:
+        password_validation.validate_password(password, user=user)
+    except DjangoValidationError as exc:
+        errors.extend(exc.messages)
+    return list(dict.fromkeys(errors))
+
+
 def serialize_user(user):
     profile = get_or_create_profile(user)
     return {
@@ -277,24 +366,132 @@ class CurrentUserView(APIView):
         })
 
 
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        User = get_user_model()
+        email = normalize_email(request.data.get("email"))
+        password = request.data.get("password") or ""
+        display_name = (request.data.get("displayName") or request.data.get("username") or email.split("@")[0]).strip()
+        requested_username = (request.data.get("username") or email).strip()
+        requested_role = request.data.get("primaryRole") or request.data.get("primary_role") or "participant"
+        valid_roles = {choice[0] for choice in UserProfile.ROLE_CHOICES}
+        if requested_role not in valid_roles:
+            return Response({"detail": "Unsupported account role."}, status=status.HTTP_400_BAD_REQUEST)
+        if requested_role == "admin":
+            return Response(
+                {"detail": "Administrator role cannot be self-assigned."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not email or "@" not in email:
+            return Response({"detail": "A valid email address is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not password:
+            return Response({"detail": "Password is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing_user = User.objects.filter(email__iexact=email).order_by("id").first()
+        password_user = existing_user or User(username=requested_username, email=email, first_name=display_name)
+        password_errors = validate_account_password(password, user=password_user, email=email)
+        if password_errors:
+            return Response({"detail": " ".join(password_errors)}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            if existing_user:
+                if existing_user.has_usable_password():
+                    return Response(
+                        {"detail": "An account with this email already exists. Please sign in instead."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                user = existing_user
+                if display_name and not user.get_full_name():
+                    user.first_name = display_name
+                if not user.email:
+                    user.email = email
+            else:
+                username = requested_username if not User.objects.filter(username=requested_username).exists() else unique_username(email)
+                user = User(username=username, email=email, first_name=display_name)
+            user.set_password(password)
+            user.save()
+
+            profile = get_or_create_profile(user, {"primary_role": requested_role})
+            profile.display_name = display_name or profile.display_name
+            profile.primary_role = requested_role
+            profile.interests = request.data.get("interests") or profile.interests or []
+            profile.skills = request.data.get("skills") or profile.skills or []
+            profile.save(update_fields=["display_name", "primary_role", "interests", "skills", "updated_at"])
+
+        login(request, user)
+        return Response({
+            "authenticated": True,
+            "user": serialize_user(user),
+            "csrfToken": get_token(request),
+        }, status=status.HTTP_201_CREATED)
+
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = normalize_email(request.data.get("email"))
+        password = request.data.get("password") or ""
+        if not email or not password:
+            return Response({"detail": "Email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if login_is_rate_limited(request, email):
+            return Response(
+                {"detail": "Too many failed sign-in attempts. Please wait 15 minutes and try again."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        User = get_user_model()
+        user = User.objects.filter(email__iexact=email).order_by("id").first()
+        authenticated_user = None
+        if user and user.has_usable_password():
+            authenticated_user = authenticate(request, username=user.get_username(), password=password)
+
+        if authenticated_user is None:
+            record_failed_login(request, email)
+            return Response({"detail": "Invalid email or password."}, status=status.HTTP_403_FORBIDDEN)
+
+        clear_failed_logins(request, email)
+        login(request, authenticated_user)
+        return Response({
+            "authenticated": True,
+            "user": serialize_user(authenticated_user),
+            "csrfToken": get_token(request),
+        })
+
+
 class DevLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
         User = get_user_model()
         display_name = request.data.get("displayName") or "Demo User"
-        email = request.data.get("email") or "demo@example.com"
-        requested_role = request.data.get("primaryRole") or request.data.get("primary_role") or "participant"
+        email = (request.data.get("email") or "demo@example.com").strip().lower()
+        requested_role = request.data.get("primaryRole") or request.data.get("primary_role")
         valid_roles = {choice[0] for choice in UserProfile.ROLE_CHOICES}
         primary_role = requested_role if requested_role in valid_roles else "participant"
         account_key = request.data.get("accountKey") or request.data.get("account_key")
         email_base = (email.split("@")[0] if email else "demo_user").replace(".", "_").replace("+", "_")
-        username = request.data.get("username") or account_key or f"{email_base}_{primary_role}"
+        requested_username = (request.data.get("username") or "").strip()
+        username = requested_username or account_key or email or f"{email_base}_{primary_role}"
 
-        user, created = User.objects.get_or_create(
-            username=username,
-            defaults={"email": email, "first_name": display_name},
-        )
+        is_demo_account = str(account_key or "").startswith("demo:")
+        if not is_demo_account:
+            return Response(
+                {"detail": "Development login is available only for demo accounts."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        user = None
+        created = False
+        if email and not is_demo_account:
+            user = User.objects.filter(email__iexact=email).order_by("id").first()
+
+        if user is None:
+            user, created = User.objects.get_or_create(
+                username=username,
+                defaults={"email": email, "first_name": display_name},
+            )
 
         changed = False
         if email and getattr(user, "email", "") != email:
@@ -306,7 +503,9 @@ class DevLoginView(APIView):
         if changed:
             user.save()
 
-        profile = get_or_create_profile(user, {"primary_role": "participant"})
+        profile = get_or_create_profile(user, {"primary_role": primary_role})
+        if not requested_role and not is_demo_account:
+            primary_role = profile.primary_role or "participant"
         is_demo_admin = account_key == "demo:admin" and username == "demo_admin"
         if is_demo_admin and not user.is_staff:
             user.is_staff = True

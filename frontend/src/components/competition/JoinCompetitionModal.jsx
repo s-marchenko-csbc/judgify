@@ -50,9 +50,15 @@ export default function JoinCompetitionModal({ competition, onClose, onSubmitted
     }
   };
 
+  const handleOverlayMouseDown = (event) => {
+    if (event.target === event.currentTarget) {
+      onClose?.();
+    }
+  };
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="join-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onMouseDown={handleOverlayMouseDown}>
+      <div className="join-modal" onMouseDown={(e) => e.stopPropagation()}>
         <h2>{t("joinModal.title")}</h2>
         <p>{t("joinModal.description")}</p>
 

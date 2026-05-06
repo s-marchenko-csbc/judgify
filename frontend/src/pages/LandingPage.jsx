@@ -176,7 +176,8 @@ export default function LandingPage() {
       setPendingSignUpData(null);
       setAuthStep(null);
     } catch (error) {
-      console.error("Failed to complete demo login", error);
+      console.error("Failed to complete account registration", error);
+      alert(error?.message || t("auth.registrationFailed", { defaultValue: "Could not create account." }));
     }
   };
 

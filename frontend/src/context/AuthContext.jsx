@@ -7,38 +7,71 @@ import React, {
   useState,
 } from "react";
 
-import { devLogin, fetchCurrentUser, logoutUser } from "../api/authApi";
+import { devLogin, fetchCurrentUser, loginUser, logoutUser, registerUser } from "../api/authApi";
 import { ensureCsrfCookie } from "../api/client";
 
 const AuthContext = createContext(undefined);
 const PROFILE_STORAGE_KEY = "judgify_profile_state";
+const SENSITIVE_PROFILE_KEYS = new Set(["password", "confirmPassword", "currentPassword", "newPassword"]);
+
+function stripSensitiveFields(value = {}) {
+  return Object.entries(value || {}).reduce((acc, [key, item]) => {
+    if (!SENSITIVE_PROFILE_KEYS.has(key)) acc[key] = item;
+    return acc;
+  }, {});
+}
+
+function sanitizeProfileStore(store = {}) {
+  return Object.entries(store || {}).reduce((acc, [key, value]) => {
+    acc[key] = stripSensitiveFields(value);
+    return acc;
+  }, {});
+}
 
 function readProfileStore() {
   try {
-    return JSON.parse(localStorage.getItem(PROFILE_STORAGE_KEY) || "{}");
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY) || "{}";
+    const parsed = JSON.parse(raw);
+    const sanitized = sanitizeProfileStore(parsed);
+    if (JSON.stringify(parsed) !== JSON.stringify(sanitized)) {
+      writeProfileStore(sanitized);
+    }
+    return sanitized;
   } catch {
     return {};
   }
 }
 
 function writeProfileStore(store) {
-  localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(store));
+  localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(sanitizeProfileStore(store)));
 }
 
 function userKey(user) {
   if (!user) return "demo_user";
   if (user.accountKey) return String(user.accountKey);
+  const email = (user.email || "").trim().toLowerCase();
+  const role = user.primaryRole || "participant";
+  if (email) return `email:${email}:role:${role}`;
   if (user.id) return `id:${user.id}`;
   if (user.username) return `username:${user.username}`;
-  const email = user.email || "demo@example.com";
+  return `role:${role}`;
+}
+
+function userStorageKeys(user) {
+  if (!user) return [];
+  const keys = new Set([userKey(user)]);
+  const email = (user.email || "").trim().toLowerCase();
   const role = user.primaryRole || "participant";
-  return `email:${email}:role:${role}`;
+  if (email) keys.add(`email:${email}:role:${role}`);
+  if (user.id) keys.add(`id:${user.id}`);
+  if (user.username) keys.add(`username:${user.username}`);
+  return [...keys];
 }
 
 function withStoredProfile(user) {
   if (!user) return null;
   const store = readProfileStore();
-  const stored = store[userKey(user)] || {};
+  const stored = userStorageKeys(user).reduce((acc, key) => ({ ...acc, ...(store[key] || {}) }), {});
   const merged = {
     primaryRole: "participant",
     country: "Ukraine",
@@ -94,15 +127,25 @@ export function AuthProvider({ children }) {
   }, [refreshUser]);
 
   const login = useCallback(async (userData = {}) => {
-    const data = await devLogin(userData);
-    const mergedUser = withStoredProfile({ ...(data.user || {}), ...userData });
+    const isDemoLogin = String(userData.accountKey || "").startsWith("demo:");
+    const data = isDemoLogin
+      ? await devLogin(userData)
+      : userData.register
+        ? await registerUser(userData)
+        : await loginUser(userData);
+    const safeUserData = stripSensitiveFields(userData);
+    const mergedUser = withStoredProfile({ ...(data.user || {}), ...safeUserData });
 
     if (mergedUser) {
       const store = readProfileStore();
-      store[userKey(mergedUser)] = {
-        ...(store[userKey(mergedUser)] || {}),
-        ...userData,
+      const storedProfile = {
+        ...userStorageKeys(mergedUser).reduce((acc, key) => ({ ...acc, ...(store[key] || {}) }), {}),
+        ...safeUserData,
+        ...mergedUser,
       };
+      userStorageKeys(mergedUser).forEach((key) => {
+        store[key] = storedProfile;
+      });
       writeProfileStore(store);
     }
 
@@ -123,15 +166,14 @@ export function AuthProvider({ children }) {
         },
       };
       const store = readProfileStore();
-      const previousKey = userKey(prev);
-      const nextKey = userKey(next);
       const storedProfile = {
-        ...(store[previousKey] || {}),
-        ...(store[nextKey] || {}),
-        ...next,
+        ...userStorageKeys(prev).reduce((acc, key) => ({ ...acc, ...(store[key] || {}) }), {}),
+        ...userStorageKeys(next).reduce((acc, key) => ({ ...acc, ...(store[key] || {}) }), {}),
+        ...stripSensitiveFields(next),
       };
-      store[previousKey] = storedProfile;
-      store[nextKey] = storedProfile;
+      [...userStorageKeys(prev), ...userStorageKeys(next)].forEach((key) => {
+        store[key] = storedProfile;
+      });
       writeProfileStore(store);
       return next;
     });
