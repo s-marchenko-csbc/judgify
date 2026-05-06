@@ -13,6 +13,25 @@ import { ensureCsrfCookie } from "../api/client";
 const AuthContext = createContext(undefined);
 const PROFILE_STORAGE_KEY = "judgify_profile_state";
 const SENSITIVE_PROFILE_KEYS = new Set(["password", "confirmPassword", "currentPassword", "newPassword"]);
+const PROFILE_STORAGE_FIELDS = [
+  "accountKey",
+  "id",
+  "email",
+  "username",
+  "displayName",
+  "primaryRole",
+  "language",
+  "country",
+  "organization",
+  "bio",
+  "position",
+  "phone",
+  "city",
+  "skills",
+  "interests",
+  "notifications",
+  "links",
+];
 
 function stripSensitiveFields(value = {}) {
   return Object.entries(value || {}).reduce((acc, [key, item]) => {
@@ -21,9 +40,62 @@ function stripSensitiveFields(value = {}) {
   }, {});
 }
 
+function isDataUrl(value) {
+  return typeof value === "string" && value.trim().toLowerCase().startsWith("data:");
+}
+
+function compactString(value, maxLength = 1000) {
+  return typeof value === "string" ? value.slice(0, maxLength) : value;
+}
+
+function compactStringList(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string").map((item) => item.slice(0, 120)).slice(0, 50)
+    : [];
+}
+
+function compactLinks(value = {}) {
+  return Object.entries(value || {}).reduce((acc, [key, item]) => {
+    if (typeof item === "string" && item && !isDataUrl(item)) {
+      acc[key] = item.slice(0, 500);
+    }
+    return acc;
+  }, {});
+}
+
+function compactNotifications(value = {}) {
+  return Object.entries(value || {}).reduce((acc, [key, item]) => {
+    acc[key] = Boolean(item);
+    return acc;
+  }, {});
+}
+
+function compactStoredProfile(value = {}) {
+  const safe = stripSensitiveFields(value);
+  const compact = {};
+  PROFILE_STORAGE_FIELDS.forEach((key) => {
+    if (safe[key] === undefined || safe[key] === null) return;
+    if (key === "skills" || key === "interests") {
+      compact[key] = compactStringList(safe[key]);
+    } else if (key === "links") {
+      compact[key] = compactLinks(safe[key]);
+    } else if (key === "notifications") {
+      compact[key] = compactNotifications(safe[key]);
+    } else if (typeof safe[key] === "string") {
+      compact[key] = isDataUrl(safe[key]) ? "" : compactString(safe[key]);
+    } else if (typeof safe[key] === "number" || typeof safe[key] === "boolean") {
+      compact[key] = safe[key];
+    }
+  });
+  return compact;
+}
+
 function sanitizeProfileStore(store = {}) {
   return Object.entries(store || {}).reduce((acc, [key, value]) => {
-    acc[key] = stripSensitiveFields(value);
+    const compact = compactStoredProfile(value);
+    if (Object.keys(compact).length > 0) {
+      acc[key] = compact;
+    }
     return acc;
   }, {});
 }
@@ -43,7 +115,21 @@ function readProfileStore() {
 }
 
 function writeProfileStore(store) {
-  localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(sanitizeProfileStore(store)));
+  const sanitized = sanitizeProfileStore(store);
+  try {
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(sanitized));
+  } catch (error) {
+    if (error?.name === "QuotaExceededError") {
+      try {
+        localStorage.removeItem(PROFILE_STORAGE_KEY);
+        localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(sanitized));
+      } catch {
+        localStorage.removeItem(PROFILE_STORAGE_KEY);
+      }
+      return;
+    }
+    throw error;
+  }
 }
 
 function userKey(user) {
@@ -138,11 +224,11 @@ export function AuthProvider({ children }) {
 
     if (mergedUser) {
       const store = readProfileStore();
-      const storedProfile = {
+      const storedProfile = compactStoredProfile({
         ...userStorageKeys(mergedUser).reduce((acc, key) => ({ ...acc, ...(store[key] || {}) }), {}),
         ...safeUserData,
         ...mergedUser,
-      };
+      });
       userStorageKeys(mergedUser).forEach((key) => {
         store[key] = storedProfile;
       });
@@ -166,11 +252,11 @@ export function AuthProvider({ children }) {
         },
       };
       const store = readProfileStore();
-      const storedProfile = {
+      const storedProfile = compactStoredProfile({
         ...userStorageKeys(prev).reduce((acc, key) => ({ ...acc, ...(store[key] || {}) }), {}),
         ...userStorageKeys(next).reduce((acc, key) => ({ ...acc, ...(store[key] || {}) }), {}),
         ...stripSensitiveFields(next),
-      };
+      });
       [...userStorageKeys(prev), ...userStorageKeys(next)].forEach((key) => {
         store[key] = storedProfile;
       });

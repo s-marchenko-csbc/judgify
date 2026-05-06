@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useLanguage } from "../../context/LanguageContext";
+import BrandLogo from "../BrandLogo";
 
 export default function SignInModal({ isOpen, onClose, onOpenSignUp, onComplete }) {
   const { t } = useLanguage();
@@ -80,7 +81,7 @@ export default function SignInModal({ isOpen, onClose, onOpenSignUp, onComplete 
           x
         </button>
 
-        <div className="auth-modal-logo">Judgify</div>
+        <div className="auth-modal-logo"><BrandLogo className="auth-brand-logo" showText /></div>
         <div className="auth-modal-subtitle">{t("auth.welcomeBack")}</div>
         <div className="auth-modal-caption">
           {t("auth.signInCaption")}

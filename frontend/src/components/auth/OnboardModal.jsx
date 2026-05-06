@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useLanguage } from "../../context/LanguageContext";
+import BrandLogo from "../BrandLogo";
 
 const suggestedInterests = [
   "Programming",
@@ -47,7 +48,7 @@ export default function OnboardModal({ onFinish }) {
   return (
     <div className="auth-modal-overlay">
       <div className="auth-modal signup-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="auth-modal-logo">Judgify</div>
+        <div className="auth-modal-logo"><BrandLogo className="auth-brand-logo" showText /></div>
 
         <div className="onboarding-card">
           <div className="onboarding-title">{t("onboarding.title")}</div>

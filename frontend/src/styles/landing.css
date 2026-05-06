@@ -204,9 +204,8 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
 }
 
 .auth-modal-logo {
-  text-align: center;
-  font-size: 24px;
-  font-weight: 700;
+  display: flex;
+  justify-content: center;
   margin-bottom: 14px;
 }
 
@@ -3489,31 +3488,32 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   letter-spacing: -0.02em;
 }
 
-.app-logo-mark {
-  width: 48px;
-  height: 48px;
-  border-radius: 18px;
+.brand-logo {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #395886, #638ecb 58%, #8aaee0);
-  box-shadow: 0 14px 30px rgba(57, 88, 134, .28);
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-logo-mark {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
   flex: 0 0 auto;
+  filter: drop-shadow(0 12px 18px rgba(0, 45, 126, .22));
 }
 
-.app-logo-mark svg {
-  width: 34px;
-  height: 34px;
-  fill: #f0f3fa;
-}
-
-.app-logo-mark svg path + path {
-  fill: rgba(177, 201, 239, .86);
-}
-
-.app-logo-text {
+.brand-logo-text {
+  color: var(--violet-4);
+  font-weight: 900;
   font-size: 24px;
   line-height: 1;
+  letter-spacing: 0;
+}
+
+.app-logo-brand .brand-logo-mark {
+  width: 48px;
+  height: 48px;
 }
 
 .competition-tabs,
@@ -3660,7 +3660,7 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   .landing-header {
     grid-template-columns: auto 1fr;
   }
-  .app-logo-text {
+  .app-logo-brand .brand-logo-text {
     display: none;
   }
 }
@@ -3920,13 +3920,18 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
 }
 
 .app-splash-logo {
-  font-size: clamp(64px, 12vw, 156px);
-  font-weight: 900;
-  letter-spacing: -0.08em;
-  color: #1b3764;
-  text-shadow: 0 18px 46px rgba(27, 55, 100, 0.25);
   animation: judgifyPulse 1.15s ease-in-out infinite;
   user-select: none;
+}
+
+.app-splash-logo .brand-logo-mark {
+  width: clamp(110px, 18vw, 210px);
+  height: clamp(110px, 18vw, 210px);
+  filter: drop-shadow(0 24px 36px rgba(0, 45, 126, .28));
+}
+
+.app-splash-logo .brand-logo-text {
+  font-size: clamp(56px, 10vw, 132px);
 }
 
 .app-splash-hint {
@@ -4093,8 +4098,8 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   cursor: pointer;
   min-width: 0;
 }
-.profile-logo-link .app-logo-mark { width: 44px; height: 44px; border-radius: 16px; }
-.profile-logo-link .app-logo-mark svg { width: 31px; height: 31px; }
+.profile-logo-brand .brand-logo-mark { width: 44px; height: 44px; }
+.profile-logo-brand .brand-logo-text { font-size: 20px; }
 .profile-topbar { grid-template-columns: 54px auto minmax(180px, 1fr) auto; }
 .account-trigger.profile-btn {
   width: 46px;
@@ -4145,6 +4150,6 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
 .profile-stat-tile--link:hover { transform: translateY(-2px); box-shadow: 0 16px 30px rgba(57, 88, 134, .18); }
 @media (max-width: 760px) {
   .profile-topbar { grid-template-columns: 44px 1fr auto; }
-  .profile-logo-link span:last-child { display: none; }
+  .profile-logo-brand .brand-logo-text { display: none; }
   .profile-search { grid-column: 1 / -1; }
 }
