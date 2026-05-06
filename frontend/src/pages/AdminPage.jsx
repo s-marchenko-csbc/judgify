@@ -6,6 +6,7 @@ import { clearLandingFiltersCache } from "../api/landingApi";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 import {
+  createAdminFilter,
   deleteAdminCompetition,
   deleteAdminUser,
   fetchAdminCompetitions,
@@ -14,6 +15,7 @@ import {
   fetchAdminUsers,
   updateAdminCompetition,
   updateAdminFilter,
+  updateAdminSettings,
   updateAdminUser,
 } from "../api/adminApi";
 
@@ -28,7 +30,7 @@ const roleOptions = ["admin", "organizer", "participant", "viewer"];
 const competitionStatuses = ["draft", "published", "upcoming", "registration_open", "active", "judging", "finished", "archived"];
 const approvalStatuses = ["pending", "approved", "rejected"];
 const visibilityModes = ["public", "unlisted", "private"];
-const filterGroups = ["status", "event_type", "participation_type", "industry", "difficulty", "language"];
+const filterGroups = ["status", "event_type", "participation_type", "industry", "difficulty", "language", "access_mode"];
 
 function formatDate(value, language) {
   if (!value) return "-";
@@ -202,10 +204,42 @@ function ServerPanel({ server, onRefresh, t, language }) {
   );
 }
 
-function FiltersPanel({ filterConfig, onLocalChange, onSave, t }) {
+function AdminSettingsStrip({ settings, onToggle, t }) {
+  return (
+    <section className="admin-panel admin-settings-strip">
+      <div>
+        <h2>{t("admin.settings.title")}</h2>
+        <p>{t("admin.settings.subtitle")}</p>
+      </div>
+      <button
+        className={`admin-pill ${settings?.autoApproveOrganizerCompetitions ? "good" : "muted"}`}
+        type="button"
+        onClick={() => onToggle?.(!settings?.autoApproveOrganizerCompetitions)}
+      >
+        {settings?.autoApproveOrganizerCompetitions ? t("admin.settings.autoApproveOn") : t("admin.settings.autoApproveOff")}
+      </button>
+    </section>
+  );
+}
+
+function FiltersPanel({ filterConfig, onLocalChange, onSave, onCreate, t }) {
+  const [newFilter, setNewFilter] = useState({
+    group: "industry",
+    value: "",
+    labelEn: "",
+    labelUk: "",
+    sortOrder: 99,
+  });
   const rows = filterGroups.flatMap((group) =>
     (filterConfig?.[group] || []).map((item) => ({ ...item, group }))
   );
+  const submitNewFilter = (event) => {
+    event.preventDefault();
+    const value = newFilter.value.trim();
+    if (!value) return;
+    onCreate?.({ ...newFilter, value, hidden: false });
+    setNewFilter((prev) => ({ ...prev, value: "", labelEn: "", labelUk: "" }));
+  };
   return (
     <section className="admin-panel">
       <div className="admin-panel-header">
@@ -214,6 +248,15 @@ function FiltersPanel({ filterConfig, onLocalChange, onSave, t }) {
           <p>{t("admin.filters.subtitle")}</p>
         </div>
       </div>
+      <form className="admin-filter-create-form" onSubmit={submitNewFilter}>
+        <select value={newFilter.group} onChange={(event) => setNewFilter((prev) => ({ ...prev, group: event.target.value }))}>
+          {filterGroups.map((group) => <option key={group} value={group}>{t(`filters.groups.${group}`, { defaultValue: group })}</option>)}
+        </select>
+        <input value={newFilter.value} onChange={(event) => setNewFilter((prev) => ({ ...prev, value: event.target.value }))} placeholder={t("admin.filters.newValue")} />
+        <input value={newFilter.labelEn} onChange={(event) => setNewFilter((prev) => ({ ...prev, labelEn: event.target.value }))} placeholder={t("admin.filters.labelEn")} />
+        <input value={newFilter.labelUk} onChange={(event) => setNewFilter((prev) => ({ ...prev, labelUk: event.target.value }))} placeholder={t("admin.filters.labelUk")} />
+        <button className="admin-primary-btn compact" type="submit">{t("admin.filters.add")}</button>
+      </form>
       <div className="admin-table-wrap">
         <table className="admin-table admin-filter-table">
           <thead>
@@ -399,12 +442,32 @@ export default function AdminPage() {
     }
   };
 
+  const createFilter = async (item) => {
+    setBusy(true);
+    try {
+      const updated = await createAdminFilter(item);
+      setFilterConfig(updated);
+      clearLandingFiltersCache();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateSettings = async (autoApproveOrganizerCompetitions) => {
+    setBusy(true);
+    try {
+      setOverview(await updateAdminSettings({ autoApproveOrganizerCompetitions }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   let body = <UsersPanel users={users} filters={userFilters} setFilters={setUserFilters} onUpdate={updateUser} onDelete={removeUser} t={t} language={language} />;
   if (activeTab === "competitions") {
     body = <CompetitionsPanel competitions={competitions} filters={competitionFilters} setFilters={setCompetitionFilters} onUpdate={updateCompetition} onDelete={removeCompetition} t={t} />;
   }
   if (activeTab === "filters") {
-    body = <FiltersPanel filterConfig={filterConfig} onLocalChange={updateFilterLocal} onSave={saveFilter} t={t} />;
+    body = <FiltersPanel filterConfig={filterConfig} onLocalChange={updateFilterLocal} onSave={saveFilter} onCreate={createFilter} t={t} />;
   }
   if (activeTab === "server") {
     body = <ServerPanel server={overview?.server} onRefresh={loadOverview} t={t} language={language} />;
@@ -423,6 +486,7 @@ export default function AdminPage() {
       </header>
       <main className="admin-shell">
         <StatGrid stats={overview?.stats} t={t} />
+        <AdminSettingsStrip settings={overview?.settings} onToggle={updateSettings} t={t} />
         <nav className="admin-tabs">
           {tabs.map((tab) => <button key={tab.id} type="button" className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>{t(tab.labelKey)}</button>)}
         </nav>

@@ -14,6 +14,7 @@ function normalizeRole(role) {
 }
 
 function getStatusLabel(status, t) {
+  if (!status) return "";
   return t(`options.status.${status}`, { defaultValue: status });
 }
 
@@ -54,8 +55,15 @@ function LastCompetitionBanner({ item, t }) {
 }
 
 function StatsBlock({ role, statsData, onNavigate, t }) {
-  const isOrganizer = role === "organizer" || role === "admin";
-  const stats = isOrganizer
+  const isAdmin = role === "admin";
+  const isOrganizer = role === "organizer" || isAdmin;
+  const stats = isAdmin
+    ? [
+        { value: statsData?.pending ?? 0, label: "pending" },
+        { value: statsData?.archived ?? 0, label: "archived" },
+        { value: statsData?.judge_assignments ?? 0, label: "judgeAssignments" },
+      ]
+    : isOrganizer
     ? [
         { value: statsData?.organized ?? statsData?.active ?? 0, label: "organized" },
         { value: statsData?.pending ?? 0, label: "pending" },
@@ -178,6 +186,25 @@ function CompetitionSection({ title, items = [], savedIds, onSavedChange, emptyT
       {items.length === 0 ? <div className="profile-empty-state">{emptyText || t("profile.noCompetitions")}</div> : (
         <div className="cards-grid profile-competition-grid">
           {items.map((item) => <CompetitionCard key={item.id} item={{ ...item, is_saved: savedIds.has(item.id) || Boolean(item.is_saved) }} onSavedChange={onSavedChange} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function NotificationsPanel({ items = [], t }) {
+  return (
+    <section className="right-panel-block profile-notifications-panel">
+      <div className="profile-panel-header"><h2>{t("profile.latestNotifications")}</h2></div>
+      {items.length === 0 ? <div className="profile-empty-state">{t("profile.noNotifications")}</div> : (
+        <div className="profile-notifications-list">
+          {items.map((item) => (
+            <button type="button" className="profile-notification-item" key={item.id} onClick={() => item.competition_id && window.location.assign(`/competitions/${item.competition_id}`)}>
+              <strong>{item.title}</strong>
+              <span>{item.competition_name || item.text || getStatusLabel(item.status, t)}</span>
+              <small>{getStatusLabel(item.status, t)}</small>
+            </button>
+          ))}
         </div>
       )}
     </section>
@@ -357,6 +384,7 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [editing, setEditing] = useState(false);
   const [recentlyViewed, setRecentlyViewed] = useState([]);
+  const [savedCompetitions, setSavedCompetitions] = useState([]);
   const [savedIds, setSavedIds] = useState(() => new Set());
   const [profileStats, setProfileStats] = useState(null);
   const [profileBadges, setProfileBadges] = useState([]);
@@ -368,6 +396,7 @@ export default function ProfilePage() {
   const [archivedCompetitions, setArchivedCompetitions] = useState([]);
   const [teams, setTeams] = useState([]);
   const [judgeWork, setJudgeWork] = useState([]);
+  const [notifications, setNotifications] = useState([]);
 
   const role = normalizeRole(user?.primaryRole);
 
@@ -376,6 +405,7 @@ export default function ProfilePage() {
     const saved = dashboard?.saved_competitions || [];
     const ids = new Set(saved.map((item) => item.id));
     setSavedIds(ids);
+    setSavedCompetitions(mergeSavedState(saved, ids));
     setRecentlyViewed(mergeSavedState(dashboard?.recently_viewed || [], ids));
     setDraftCompetitions(dashboard?.draft_competitions || []);
     setPendingRequests(dashboard?.pending_requests || []);
@@ -387,6 +417,7 @@ export default function ProfilePage() {
     setProfileCertificates(dashboard?.certificates || []);
     setProfileMaterials(dashboard?.materials || []);
     setJudgeWork(dashboard?.judge_work || []);
+    setNotifications(dashboard?.notifications || []);
   };
 
   useEffect(() => {
@@ -396,6 +427,7 @@ export default function ProfilePage() {
       if (cancelled) return;
       const ids = new Set((dashboard?.saved_competitions || []).map((item) => item.id));
       setSavedIds(ids);
+      setSavedCompetitions(mergeSavedState(dashboard?.saved_competitions || [], ids));
       setRecentlyViewed(mergeSavedState(dashboard?.recently_viewed || [], ids));
       setDraftCompetitions(dashboard?.draft_competitions || []);
       setPendingRequests(dashboard?.pending_requests || []);
@@ -407,6 +439,7 @@ export default function ProfilePage() {
       setProfileCertificates(dashboard?.certificates || []);
       setProfileMaterials(dashboard?.materials || []);
       setJudgeWork(dashboard?.judge_work || []);
+      setNotifications(dashboard?.notifications || []);
     }).catch(console.error);
     return () => { cancelled = true; };
   }, [isAuthenticated]);
@@ -415,6 +448,7 @@ export default function ProfilePage() {
     setSavedIds((prev) => { const next = new Set(prev); if (nextSaved) next.add(competitionId); else next.delete(competitionId); return next; });
     const patch = (items) => items.map((competition) => competition.id === competitionId ? { ...competition, is_saved: nextSaved } : competition);
     setRecentlyViewed(patch);
+    setSavedCompetitions(patch);
     setActiveCompetitions(patch);
     setArchivedCompetitions(patch);
   };
@@ -437,7 +471,7 @@ export default function ProfilePage() {
     { id: "overview", label: t("profile.overview") },
     ...(role !== "viewer" ? [{ id: "pending", label: t("profile.pending") }] : []),
     { id: "archived", label: t("profile.archivedTab") },
-    ...(role === "organizer" || role === "admin" ? [{ id: "drafts", label: t("profile.myCompetitions") }] : []),
+    ...(role === "organizer" ? [{ id: "drafts", label: t("profile.myCompetitions") }] : []),
   ];
 
   if (loading) return <div className="profile-dashboard-page"><main className="profile-dashboard-shell"><div className="profile-loading-panel">{t("profile.loading")}</div></main></div>;
@@ -469,8 +503,8 @@ export default function ProfilePage() {
 
             {editing && <ProfileEditForm user={user} t={t} onSave={async (patch) => { try { const result = await updateProfileDashboard(patch); updateProfile(result?.user || patch); } catch (error) { console.error(error); updateProfile(patch); } setEditing(false); }} />}
 
-            {(role === "organizer" || role === "admin") && activeTab === "overview" && <CreateCompetitionPanel t={t} />}
-            {(role === "organizer" || role === "admin") && activeTab === "drafts" && <DraftsPanel items={draftCompetitions} t={t} />}
+            {role === "organizer" && activeTab === "overview" && <CreateCompetitionPanel t={t} />}
+            {role === "organizer" && activeTab === "drafts" && <DraftsPanel items={draftCompetitions} t={t} />}
             {activeTab === "pending" && <PendingRequestsPanel role={role} requests={pendingRequests} onReview={handleReview} t={t} />}
 
             {role === "participant" && activeTab === "overview" && (
@@ -489,12 +523,15 @@ export default function ProfilePage() {
                 <StatsBlock role={role} statsData={profileStats} t={t} />
                 <JudgeWorkPanel items={judgeWork} t={t} />
                 <TeamAccessPanel teams={teams} currentUserId={user?.id} onManageTeam={handleManageTeam} t={t} />
-                <BadgesCertificatesPanel badges={profileBadges} certificates={profileCertificates} stats={profileStats} t={t} />
+                {role !== "admin" && <BadgesCertificatesPanel badges={profileBadges} certificates={profileCertificates} stats={profileStats} t={t} />}
               </>
             )}
 
             {role === "viewer" && activeTab === "overview" && (
-              <section className="profile-panel profile-viewer-note"><h2>{t("profile.viewerProfile")}</h2><p>{t("profile.viewerText")}</p></section>
+              <>
+                <section className="profile-panel profile-viewer-note"><h2>{t("profile.viewerProfile")}</h2><p>{t("profile.viewerText")}</p></section>
+                <CompetitionSection title={t("profile.savedCompetitions")} items={savedCompetitions} savedIds={savedIds} onSavedChange={handleSavedChange} emptyText={t("profile.noSaved")} t={t} />
+              </>
             )}
 
             {activeTab === "archived" && <CompetitionSection title={t("profile.archivedCompetitions")} items={archivedCompetitions} savedIds={savedIds} onSavedChange={handleSavedChange} emptyText={t("profile.noArchived")} t={t} />}
@@ -505,8 +542,9 @@ export default function ProfilePage() {
               <div className="profile-panel-header"><h2>{t("profile.recentlyViewed")}</h2></div>
               <div className="last-competitions-list">{recentlyViewed.slice(0, role === "viewer" ? 6 : 4).map((item) => <LastCompetitionBanner key={item.id} item={item} t={t} />)}</div>
             </section>
+            <NotificationsPanel items={notifications} t={t} />
             {role !== "viewer" && activeTab !== "overview" && <StatsBlock role={role} statsData={profileStats} onNavigate={setActiveTab} t={t} />}
-            {(role === "participant" || role === "admin") && profileMaterials.length > 0 && (
+            {role === "participant" && profileMaterials.length > 0 && (
               <section className="profile-panel"><h2>{t("profile.personalMaterials")}</h2><div className="profile-resource-list">{profileMaterials.map((item) => {
                 const href = getFileUrl(item.file);
                 const title = getMaterialTitle(item, t("profile.material"));

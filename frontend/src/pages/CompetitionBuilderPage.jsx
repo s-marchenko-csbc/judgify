@@ -176,6 +176,8 @@ function normalizeDraft(data) {
 
 function preparePayload(draft, step) {
   const payload = { ...draft, setup_step: step, completion_percent: Math.min(100, step * 20) };
+  if (!payload.judging_starts_at && payload.starts_at) payload.judging_starts_at = payload.starts_at;
+  if (!payload.judging_ends_at && payload.ends_at) payload.judging_ends_at = payload.ends_at;
   [
     "registration_starts_at",
     "registration_ends_at",
@@ -188,7 +190,7 @@ function preparePayload(draft, step) {
     payload[key] = fromDateTimeLocal(payload[key]);
   });
   let previousRoundEnd = null;
-  payload.rounds = (payload.rounds || []).map((round, index) => {
+  payload.rounds = normalizeRoundSequence(payload.rounds || [], payload.starts_at).map((round, index) => {
     const derivedStart = !round.starts_at && previousRoundEnd
       ? toLocalInputFromTime(previousRoundEnd + 1000)
       : round.starts_at;
@@ -223,6 +225,29 @@ function timeValue(value) {
   return Number.isNaN(time) ? null : time;
 }
 
+function normalizeRoundSequence(rounds = [], competitionStarts = "") {
+  let previousEnd = null;
+  const fallbackStart = timeValue(competitionStarts);
+  const normalized = (rounds.length ? rounds : [{ ...defaultDraft.rounds[0] }]).map((round, index) => {
+    let startsAt = round.starts_at || "";
+    let endsAt = round.ends_at || "";
+    const startTime = timeValue(startsAt);
+    if (previousEnd && (!startTime || startTime <= previousEnd)) {
+      startsAt = toLocalInputFromTime(previousEnd + 1000);
+    } else if (!startTime && index === 0 && fallbackStart) {
+      startsAt = toLocalInputFromTime(fallbackStart);
+    }
+    const effectiveStart = timeValue(startsAt);
+    const endTime = timeValue(endsAt);
+    if (effectiveStart && endTime && endTime <= effectiveStart) {
+      endsAt = toLocalInputFromTime(effectiveStart + 60 * 60 * 1000);
+    }
+    previousEnd = timeValue(endsAt) || previousEnd;
+    return { ...round, starts_at: startsAt, ends_at: endsAt, sort_order: index };
+  });
+  return normalized;
+}
+
 function getScheduleErrors(draft, t) {
   const errors = [];
   const starts = timeValue(draft.starts_at);
@@ -237,7 +262,6 @@ function getScheduleErrors(draft, t) {
   if (registrationStarts && starts && registrationStarts > starts) errors.push(t("builder.validation.registrationBeforeStart"));
   if (registrationEnds && starts && registrationEnds > starts) errors.push(t("builder.validation.registrationEndBeforeStart"));
   if (registrationStarts && registrationEnds && registrationEnds <= registrationStarts) errors.push(t("builder.validation.registrationEndAfterStart"));
-  if (judgingStarts && ends && judgingStarts < ends) errors.push(t("builder.validation.judgingAfterCompetition"));
   if (judgingStarts && judgingEnds && judgingEnds <= judgingStarts) errors.push(t("builder.validation.judgingEndAfterStart"));
   if (resultsAt && judgingEnds && resultsAt < judgingEnds) errors.push(t("builder.validation.resultsAfterJudging"));
 
@@ -342,7 +366,15 @@ export default function CompetitionBuilderPage() {
     }
   }, [id, isAuthenticated, localizedDefaultDraft, navigate]);
 
-  const setField = (field, value) => setDraft((prev) => ({ ...prev, [field]: value }));
+  const setField = (field, value) => setDraft((prev) => {
+    const next = { ...prev, [field]: value };
+    if (field === "starts_at" && !prev.judging_starts_at) next.judging_starts_at = value;
+    if (field === "ends_at" && !prev.judging_ends_at) next.judging_ends_at = value;
+    if (field === "starts_at" || field === "ends_at") {
+      next.rounds = normalizeRoundSequence(next.rounds || [], next.starts_at);
+    }
+    return next;
+  });
   const setNested = (section, field, value) => setDraft((prev) => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
 
   const updateArrayItem = (section, index, field, value) => {
@@ -353,7 +385,13 @@ export default function CompetitionBuilderPage() {
   };
 
   const addArrayItem = (section, item) => {
-    setDraft((prev) => ({ ...prev, [section]: [...prev[section], { ...item, sort_order: prev[section].length }] }));
+    setDraft((prev) => {
+      const nextItems = [...prev[section], { ...item, sort_order: prev[section].length }];
+      return {
+        ...prev,
+        [section]: section === "rounds" ? normalizeRoundSequence(nextItems, prev.starts_at) : nextItems,
+      };
+    });
   };
 
   const removeArrayItem = (section, index) => {
@@ -361,7 +399,10 @@ export default function CompetitionBuilderPage() {
       const nextItems = (prev[section] || [])
         .filter((_, itemIndex) => itemIndex !== index)
         .map((item, itemIndex) => ({ ...item, sort_order: itemIndex }));
-      return { ...prev, [section]: nextItems };
+      return {
+        ...prev,
+        [section]: section === "rounds" ? normalizeRoundSequence(nextItems, prev.starts_at) : nextItems,
+      };
     });
   };
 

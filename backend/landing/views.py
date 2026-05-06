@@ -54,6 +54,7 @@ from .models import (
     RecentlyViewedMaterial,
     CompetitionMaterial,
     LandingFilterOption,
+    PlatformSetting,
     UserBadge,
     Certificate,
     UserMaterial,
@@ -89,6 +90,26 @@ from .serializers import (
 
 PROCESS_STARTED_AT = time.time()
 
+
+AUTO_APPROVE_ORGANIZER_SETTING = "auto_approve_organizer_competitions"
+
+
+def get_platform_setting(key, default=None):
+    setting = PlatformSetting.objects.filter(key=key).first()
+    if not setting:
+        return default
+    value = setting.value
+    if isinstance(value, dict) and "value" in value:
+        return value["value"]
+    return value
+
+
+def set_platform_setting(key, value):
+    PlatformSetting.objects.update_or_create(
+        key=key,
+        defaults={"value": {"value": value}},
+    )
+    return value
 
 
 def recompute_competition_timing(competition, now=None, save=True):
@@ -147,11 +168,19 @@ def recompute_competition_timing(competition, now=None, save=True):
 
     submissions_open = bool(active_round and active_round[1].submission_required)
 
-    if competition.starts_at and now < competition.starts_at:
+    judging_is_open = (
+        competition.judging_starts_at
+        and competition.judging_ends_at
+        and competition.judging_starts_at <= now <= competition.judging_ends_at
+    )
+
+    if competition.status == "judging" and judging_is_open:
+        status_value = "judging"
+    elif competition.starts_at and now < competition.starts_at:
         status_value = "registration_open" if registration_open else "upcoming"
     elif competition.starts_at and competition.ends_at and competition.starts_at <= now <= competition.ends_at:
         status_value = "active"
-    elif competition.judging_starts_at and competition.judging_ends_at and competition.judging_starts_at <= now <= competition.judging_ends_at:
+    elif judging_is_open:
         status_value = "judging"
     elif competition.ends_at and now > competition.ends_at:
         if competition.judging_starts_at and now < competition.judging_starts_at:
@@ -568,7 +597,9 @@ def serialize_landing_filter_options(language="en", include_hidden=False):
     configs = filter_config_map()
     label_field = "label_uk" if language == "uk" else "label_en"
     result = {}
-    for group, items in LANDING_FILTER_DEFAULTS.items():
+    groups = sorted(set(LANDING_FILTER_DEFAULTS.keys()) | {group for group, _ in configs.keys()})
+    for group in groups:
+        items = LANDING_FILTER_DEFAULTS.get(group, [])
         serialized = []
         for index, default in enumerate(items):
             config = configs.get((group, default["value"]))
@@ -587,6 +618,25 @@ def serialize_landing_filter_options(language="en", include_hidden=False):
                 "defaultLabelUk": default["label_uk"],
                 "hidden": hidden,
                 "sortOrder": config.sort_order if config else index,
+            })
+        default_values = {item["value"] for item in items}
+        for (config_group, config_value), config in configs.items():
+            if config_group != group or config_value in default_values:
+                continue
+            if config.is_hidden and not include_hidden:
+                continue
+            fallback = config_value.replace("_", " ").replace("-", " ").title()
+            label = getattr(config, label_field, "") or config.label_en or config.label_uk or fallback
+            serialized.append({
+                "group": group,
+                "value": config_value,
+                "label": label,
+                "labelEn": config.label_en or fallback,
+                "labelUk": config.label_uk or fallback,
+                "defaultLabelEn": fallback,
+                "defaultLabelUk": fallback,
+                "hidden": bool(config.is_hidden),
+                "sortOrder": config.sort_order,
             })
         result[group] = sorted(serialized, key=lambda item: (item["sortOrder"], item["value"]))
     return result
@@ -835,11 +885,28 @@ class AdminOverviewView(APIView):
                 "failedMessages": OutboundMessage.objects.filter(status="failed").count(),
             },
             "server": serialize_server_metrics(db_latency_ms=db_latency_ms),
+            "settings": {
+                "autoApproveOrganizerCompetitions": bool(
+                    get_platform_setting(AUTO_APPROVE_ORGANIZER_SETTING, False)
+                ),
+            },
             "recentMessages": [
                 serialize_admin_message(message)
                 for message in OutboundMessage.objects.select_related("competition").order_by("-created_at")[:8]
             ],
         })
+
+    def patch(self, request):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+
+        if "autoApproveOrganizerCompetitions" in request.data:
+            set_platform_setting(
+                AUTO_APPROVE_ORGANIZER_SETTING,
+                bool(request.data.get("autoApproveOrganizerCompetitions")),
+            )
+        return self.get(request)
 
 
 class AdminUsersView(APIView):
@@ -879,6 +946,28 @@ class AdminUserDetailView(APIView):
         target = get_object_or_404(User, pk=pk)
         if target.id == request.user.id:
             return Response({"detail": "You cannot delete your own administrator account."}, status=status.HTTP_400_BAD_REQUEST)
+        blocking_competitions = Competition.objects.filter(
+            participant_entries__user=target,
+            participant_entries__role="organizer",
+        ).exclude(status__in=["finished", "archived"])
+        sole_organizer_ids = []
+        for competition in blocking_competitions.distinct()[:50]:
+            organizer_count = CompetitionParticipant.objects.filter(
+                competition=competition,
+                role="organizer",
+                status="approved",
+                user__isnull=False,
+            ).exclude(user=target).count()
+            if organizer_count == 0:
+                sole_organizer_ids.append(competition.id)
+        if sole_organizer_ids:
+            return Response(
+                {
+                    "detail": "This account is the sole organizer for unfinished competitions. Reassign another organizer before deleting it.",
+                    "competitionIds": sole_organizer_ids,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         target.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1085,31 +1174,48 @@ class AdminFilterOptionsView(APIView):
         ensure_landing_filter_configs()
         return Response(serialize_landing_filter_options(language="en", include_hidden=True))
 
+    def post(self, request):
+        return self._upsert_option(request)
+
     def patch(self, request):
+        return self._upsert_option(request)
+
+    def _upsert_option(self, request):
         denied = ensure_admin_request(request)
         if denied:
             return denied
         group = (request.data.get("group") or "").strip()
         value = (request.data.get("value") or "").strip()
+        allowed_groups = set(LANDING_FILTER_DEFAULTS.keys()) | {"status", "event_type", "participation_type", "industry", "difficulty", "language"}
+        if group not in allowed_groups:
+            return Response({"detail": "Unsupported landing filter group."}, status=status.HTTP_400_BAD_REQUEST)
+        if not value:
+            return Response({"detail": "Filter value is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(value) > 64 or not value.replace("_", "").replace("-", "").isalnum():
+            return Response({"detail": "Filter value can contain letters, numbers, hyphens and underscores."}, status=status.HTTP_400_BAD_REQUEST)
         defaults_by_group = {
             item["value"]: item
             for item in LANDING_FILTER_DEFAULTS.get(group, [])
         }
-        if value not in defaults_by_group:
-            return Response({"detail": "Unsupported landing filter option."}, status=status.HTTP_400_BAD_REQUEST)
-
-        default = defaults_by_group[value]
+        default = defaults_by_group.get(value) or {
+            "label_en": value.replace("_", " ").replace("-", " ").title(),
+            "label_uk": value.replace("_", " ").replace("-", " ").title(),
+        }
+        default_order = next(
+            (
+                index
+                for index, item in enumerate(LANDING_FILTER_DEFAULTS.get(group, []))
+                if item["value"] == value
+            ),
+            LandingFilterOption.objects.filter(group=group).count(),
+        )
         option, _ = LandingFilterOption.objects.get_or_create(
             group=group,
             value=value,
             defaults={
                 "label_en": default["label_en"],
                 "label_uk": default["label_uk"],
-                "sort_order": next(
-                    index
-                    for index, item in enumerate(LANDING_FILTER_DEFAULTS[group])
-                    if item["value"] == value
-                ),
+                "sort_order": default_order,
             },
         )
         if "labelEn" in request.data:
@@ -2223,7 +2329,6 @@ class ProfileDashboardView(APIView):
         elif role == "admin" or user.is_staff:
             organizer_drafts = Competition.objects.filter(
                 participant_entries__role="organizer",
-                status="draft",
                 organizer_approval_status="pending",
             ).select_related().distinct().order_by("-updated_at")[:20]
             pending_requests = [
@@ -2288,6 +2393,42 @@ class ProfileDashboardView(APIView):
             for assignment in judge_assignments
         ]
 
+        notifications = []
+        for message in OutboundMessage.objects.filter(recipient_email__iexact=user.email).select_related("competition").order_by("-created_at")[:8]:
+            notifications.append({
+                "id": f"message-{message.id}",
+                "type": "message",
+                "title": message.subject,
+                "text": message.body[:240],
+                "competition_id": message.competition_id,
+                "competition_name": message.competition.name if message.competition else "",
+                "status": message.status,
+                "created_at": message.created_at,
+            })
+        for item in CompetitionJoinRequest.objects.filter(user=user).select_related("competition", "team").order_by("-created_at")[:8]:
+            notifications.append({
+                "id": f"join-{item.id}",
+                "type": "join_request",
+                "title": item.competition.name,
+                "text": item.message or item.team_name or (item.team.name if item.team else ""),
+                "competition_id": item.competition_id,
+                "competition_name": item.competition.name,
+                "status": item.status,
+                "created_at": item.created_at,
+            })
+        for assignment in judge_assignments[:8]:
+            notifications.append({
+                "id": f"judge-{assignment.id}",
+                "type": "judge_assignment",
+                "title": assignment.competition.name,
+                "text": assignment.round.title if assignment.round else assignment.get_assignment_type_display(),
+                "competition_id": assignment.competition_id,
+                "competition_name": assignment.competition.name,
+                "status": assignment.status,
+                "created_at": assignment.updated_at,
+            })
+        notifications = sorted(notifications, key=lambda item: item["created_at"] or timezone.now(), reverse=True)[:10]
+
         return Response({
             "user": serialize_user(user),
             "profile": UserProfileSerializer(profile).data,
@@ -2315,6 +2456,7 @@ class ProfileDashboardView(APIView):
                 context={"request": request},
             ).data,
             "judge_work": judge_work,
+            "notifications": notifications,
             "stats": {
                 "active": active.count(),
                 "pending": len(pending_requests),
@@ -2384,6 +2526,11 @@ def normalize_builder_payload(data):
         if payload.get(nested_field) is None:
             payload.pop(nested_field, None)
 
+    if payload.get("starts_at") and not payload.get("judging_starts_at"):
+        payload["judging_starts_at"] = payload["starts_at"]
+    if payload.get("ends_at") and not payload.get("judging_ends_at"):
+        payload["judging_ends_at"] = payload["ends_at"]
+
     normalized_rounds = []
     for round_item in payload.get("rounds") or []:
         item = round_item.copy()
@@ -2428,9 +2575,13 @@ def normalize_upload_name(name):
 
 def create_uploaded_user_file(owner, uploaded_file, file_type="resource", visibility="private"):
     original_name = normalize_upload_name(getattr(uploaded_file, "name", "upload"))
-    content = uploaded_file.read()
-    size_bytes = len(content)
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    declared_size = getattr(uploaded_file, "size", None)
+    if declared_size and declared_size > max_bytes:
+        raise ValueError(f"File is too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB} MB.")
+
+    content = uploaded_file.read(max_bytes + 1)
+    size_bytes = len(content)
     if size_bytes > max_bytes:
         raise ValueError(f"File is too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB} MB.")
 
@@ -2522,9 +2673,15 @@ class CompetitionDraftListCreateView(APIView):
         data.setdefault("visibility_mode", "public")
         data.setdefault("is_public", data.get("visibility_mode") == "public")
         data.setdefault("show_in_catalog", data.get("visibility_mode") == "public")
+        auto_approved = user_is_admin(request.user) or get_platform_setting(AUTO_APPROVE_ORGANIZER_SETTING, False)
         serializer = CompetitionBuilderSerializer(data=data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         competition = serializer.save()
+        if auto_approved:
+            competition.organizer_approval_status = "approved"
+            competition.organizer_approved_by = request.user if user_is_admin(request.user) else None
+            competition.organizer_approved_at = timezone.now()
+            competition.save(update_fields=["organizer_approval_status", "organizer_approved_by", "organizer_approved_at", "updated_at"])
         ensure_organizer_membership(request.user, competition)
         return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
@@ -2575,6 +2732,10 @@ class CompetitionPublishView(APIView):
         published_at = timezone.now()
         if not competition.starts_at:
             competition.starts_at = published_at
+        if not competition.judging_starts_at:
+            competition.judging_starts_at = competition.starts_at
+        if not competition.judging_ends_at:
+            competition.judging_ends_at = competition.ends_at
 
         if competition.ends_at and competition.ends_at <= competition.starts_at:
             return Response({
@@ -2621,7 +2782,7 @@ class CompetitionPublishView(APIView):
         competition.show_in_catalog = competition.visibility_mode == "public"
         competition.publish_ready = True
         competition.completion_percent = 100
-        competition.save(update_fields=["starts_at", "status", "is_public", "show_in_catalog", "publish_ready", "completion_percent", "updated_at"])
+        competition.save(update_fields=["starts_at", "judging_starts_at", "judging_ends_at", "status", "is_public", "show_in_catalog", "publish_ready", "completion_percent", "updated_at"])
         recompute_competition_timing(competition, save=True)
         return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
 
@@ -2994,8 +3155,8 @@ class CompetitionJudgingView(APIView):
         if not criterion_allows_review_type(criterion, review_type):
             return Response({"detail": "This criterion cannot be evaluated with the selected review type."}, status=status.HTTP_400_BAD_REQUEST)
 
-        if round_obj.status not in ["closed", "judged"]:
-            return Response({"detail": "Works can be scored only after the round is closed."}, status=status.HTTP_400_BAD_REQUEST)
+        if round_obj.status not in ["active", "closed", "judged"]:
+            return Response({"detail": "Works can be scored only while the round is active or after it is closed."}, status=status.HTTP_400_BAD_REQUEST)
 
         raw_score = request.data.get("score")
         try:

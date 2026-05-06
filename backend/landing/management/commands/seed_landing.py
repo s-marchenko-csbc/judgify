@@ -165,7 +165,7 @@ class Command(BaseCommand):
         self._create_admin_pending_proposal(now)
         self._create_rounds_and_schedule(competitions, now)
         self._create_materials(competitions, demo_users["organizer"])
-        self._create_saved_and_recent(competitions, demo_users["participant"])
+        self._create_saved_and_recent(competitions, demo_users["participant"], demo_users["viewer"])
         self._create_team_memberships_and_pending_requests(competitions, demo_users, fake_users)
         self._refresh_competition_counters(competitions)
         self._create_awards_and_certificates(competitions, demo_users, fake_users)
@@ -474,11 +474,13 @@ class Command(BaseCommand):
         )
 
     def _create_rounds_and_schedule(self, competitions, now):
+        next_month = (now.replace(day=28) + timedelta(days=4)).replace(day=1, hour=23, minute=59, second=59, microsecond=0)
+        month_end = next_month - timedelta(days=1)
         for index, comp in enumerate(competitions):
             if comp.status == "active":
                 round_count = max(comp.total_rounds, 3)
                 start_at = now - timedelta(minutes=random.randint(25, 95))
-                end_at = now + timedelta(hours=random.randint(4, 8))
+                end_at = month_end
                 self._apply_round_windows(comp, start_at, end_at, round_count, now, stream_enabled=index < 2)
                 comp.registration_starts_at = start_at - timedelta(days=2)
                 comp.registration_ends_at = start_at - timedelta(minutes=5)
@@ -490,9 +492,9 @@ class Command(BaseCommand):
 
             if comp.status == "registration_open":
                 round_count = max(comp.total_rounds, 3)
-                registration_end = now + timedelta(hours=random.randint(4, 10))
+                registration_end = now + timedelta(days=2, hours=random.randint(4, 10))
                 start_at = registration_end + timedelta(minutes=15)
-                end_at = start_at + timedelta(hours=random.randint(8, 24))
+                end_at = month_end
                 self._apply_round_windows(comp, start_at, end_at, round_count, now)
                 comp.registration_starts_at = now - timedelta(hours=2)
                 comp.registration_ends_at = registration_end
@@ -506,7 +508,7 @@ class Command(BaseCommand):
 
             if comp.status == "upcoming":
                 start_at = now + timedelta(days=2, hours=index)
-                end_at = start_at + timedelta(days=2)
+                end_at = month_end
                 self._apply_round_windows(comp, start_at, end_at, max(comp.total_rounds, 3), now)
                 comp.registration_starts_at = now + timedelta(hours=6)
                 comp.registration_ends_at = start_at - timedelta(hours=2)
@@ -517,12 +519,12 @@ class Command(BaseCommand):
 
             if comp.status == "judging":
                 start_at = now - timedelta(days=1)
-                end_at = now - timedelta(hours=2)
+                end_at = month_end
                 self._apply_round_windows(comp, start_at, end_at, max(comp.total_rounds, 3), now)
                 comp.current_round = comp.total_rounds
-                comp.timer_deadline = now + timedelta(hours=4)
+                comp.timer_deadline = month_end
                 comp.judging_starts_at = now - timedelta(hours=1)
-                comp.judging_ends_at = now + timedelta(hours=4)
+                comp.judging_ends_at = month_end
                 comp.submissions_open = False
                 comp.save()
                 continue
@@ -647,13 +649,17 @@ class Command(BaseCommand):
                 starter_material.url = ""
                 starter_material.save(update_fields=["file", "url"])
 
-    def _create_saved_and_recent(self, competitions, participant_user):
+    def _create_saved_and_recent(self, competitions, participant_user, viewer_user=None):
         for comp in competitions[:4]:
             UserSavedCompetition.objects.get_or_create(user=participant_user, competition=comp)
             RecentlyViewedCompetition.objects.get_or_create(user=participant_user, competition=comp)
             material = comp.materials.order_by("sort_order", "id").first()
             if material:
                 RecentlyViewedMaterial.objects.get_or_create(user=participant_user, material=material)
+        if viewer_user:
+            for comp in competitions[1:6]:
+                UserSavedCompetition.objects.get_or_create(user=viewer_user, competition=comp)
+                RecentlyViewedCompetition.objects.get_or_create(user=viewer_user, competition=comp)
 
     def _create_team_memberships_and_pending_requests(self, competitions, demo_users, fake_users):
         participant_user = demo_users["participant"]
@@ -823,7 +829,9 @@ class Command(BaseCommand):
             )
             badges.append(badge)
 
-        award_users = [user for user, _ in fake_users] + list(demo_users.values())
+        award_users = [user for user, _ in fake_users] + [
+            user for key, user in demo_users.items() if key != "admin"
+        ]
         for idx, award_user in enumerate(award_users):
             for offset, badge in enumerate(badges[: 2 + (idx % 3)]):
                 UserBadge.objects.get_or_create(

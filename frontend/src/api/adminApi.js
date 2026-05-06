@@ -4,8 +4,22 @@ export function fetchAdminOverview() {
   return apiRequest("/admin/overview/");
 }
 
+export function updateAdminSettings(payload = {}) {
+  return apiRequest("/admin/overview/", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchAdminFilters() {
   return apiRequest("/admin/filters/");
+}
+
+export function createAdminFilter(payload = {}) {
+  return apiRequest("/admin/filters/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function updateAdminFilter(payload = {}) {

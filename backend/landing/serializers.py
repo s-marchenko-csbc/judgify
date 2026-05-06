@@ -149,6 +149,13 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
         judging_ends_at = data.get("judging_ends_at")
         results_public_at = data.get("results_public_at")
 
+        if starts_at and not judging_starts_at:
+            attrs["judging_starts_at"] = starts_at
+            judging_starts_at = starts_at
+        if ends_at and not judging_ends_at:
+            attrs["judging_ends_at"] = ends_at
+            judging_ends_at = ends_at
+
         errors = {}
 
         if starts_at and ends_at and ends_at <= starts_at:
@@ -161,8 +168,6 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
         if registration_starts_at and registration_ends_at and registration_ends_at <= registration_starts_at:
             errors["registration_ends_at"] = "Registration end must be later than registration start."
 
-        if judging_starts_at and ends_at and judging_starts_at < ends_at:
-            errors["judging_starts_at"] = "Judging cannot start before the competition ends."
         if judging_starts_at and judging_ends_at and judging_ends_at <= judging_starts_at:
             errors["judging_ends_at"] = "Judging end must be later than judging start."
         if results_public_at and judging_ends_at and results_public_at < judging_ends_at:
@@ -232,7 +237,8 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
     def _sync_nested(self, competition, nested):
         if nested.get("rounds") is not None:
             competition.rounds.all().delete()
-            for index, item in enumerate(nested["rounds"]):
+            round_items = nested["rounds"] or [{"title": "Round 1", "description": "", "sort_order": 0}]
+            for index, item in enumerate(round_items):
                 item.setdefault("sort_order", index)
                 CompetitionRound.objects.create(competition=competition, **item)
 

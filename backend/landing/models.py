@@ -1106,6 +1106,18 @@ class LandingFilterOption(models.Model):
         return f"{self.group}:{self.value}"
 
 
+class PlatformSetting(models.Model):
+    key = models.CharField(max_length=128, unique=True)
+    value = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["key"]
+
+    def __str__(self):
+        return self.key
+
+
 class Badge(models.Model):
     code = models.SlugField(unique=True)
     title = models.CharField(max_length=255)

@@ -1035,6 +1035,14 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
+  overflow: hidden;
+}
+
+.competition-detail-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .competition-detail-title-row {
@@ -4370,6 +4378,8 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
 .admin-tools select,
 .admin-table select,
 .admin-filter-table input,
+.admin-filter-create-form input,
+.admin-filter-create-form select,
 .admin-message-form input,
 .admin-message-form select,
 .admin-message-form textarea {
@@ -4380,6 +4390,54 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   font: inherit;
   font-weight: 700;
   padding: 9px 10px;
+}
+
+.admin-settings-strip,
+.admin-filter-create-form {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-settings-strip {
+  justify-content: space-between;
+}
+
+.admin-filter-create-form {
+  margin: 0 0 16px;
+}
+
+.admin-filter-create-form input,
+.admin-filter-create-form select {
+  min-width: 160px;
+  flex: 1 1 160px;
+}
+
+.profile-notifications-panel {
+  margin-top: 16px;
+}
+
+.profile-notifications-list {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-notification-item {
+  width: 100%;
+  border: 1px solid rgba(98, 142, 203, 0.22);
+  border-radius: 8px;
+  background: rgba(240, 243, 250, 0.72);
+  color: #1f3356;
+  padding: 10px 12px;
+  text-align: left;
+  display: grid;
+  gap: 3px;
+}
+
+.profile-notification-item span,
+.profile-notification-item small {
+  color: #6f7f9a;
 }
 
 .admin-filter-table input {
