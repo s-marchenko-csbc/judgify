@@ -268,6 +268,33 @@ function PendingRequestsPanel({ role, requests = [], onReview, t }) {
   );
 }
 
+function JudgeWorkPanel({ items = [], t }) {
+  const navigate = useNavigate();
+  if (!items.length) return null;
+  return (
+    <section className="profile-panel profile-judge-work-panel">
+      <h2>{t("profile.judgeWork")}</h2>
+      <div className="profile-resource-list">
+        {items.map((item) => (
+          <button
+            type="button"
+            className="profile-resource-item profile-pending-open"
+            key={item.id}
+            onClick={() => navigate(`/competitions/${item.competition_id}?tab=judging`)}
+          >
+            <strong>{item.competition_name}</strong>
+            <span>
+              {item.round_title ? `${item.round_title} - ` : ""}
+              {getStatusLabel(item.status, t)}
+            </span>
+            <small>{t("profile.judgeScores", { count: item.scores_count || 0, final: item.finalized_count || 0 })}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ProfileEditForm({ user, onSave, t }) {
   const [draft, setDraft] = useState(() => ({
     displayName: user?.displayName || user?.username || "",
@@ -340,6 +367,7 @@ export default function ProfilePage() {
   const [activeCompetitions, setActiveCompetitions] = useState([]);
   const [archivedCompetitions, setArchivedCompetitions] = useState([]);
   const [teams, setTeams] = useState([]);
+  const [judgeWork, setJudgeWork] = useState([]);
 
   const role = normalizeRole(user?.primaryRole);
 
@@ -358,6 +386,7 @@ export default function ProfilePage() {
     setProfileBadges(dashboard?.badges || []);
     setProfileCertificates(dashboard?.certificates || []);
     setProfileMaterials(dashboard?.materials || []);
+    setJudgeWork(dashboard?.judge_work || []);
   };
 
   useEffect(() => {
@@ -377,6 +406,7 @@ export default function ProfilePage() {
       setProfileBadges(dashboard?.badges || []);
       setProfileCertificates(dashboard?.certificates || []);
       setProfileMaterials(dashboard?.materials || []);
+      setJudgeWork(dashboard?.judge_work || []);
     }).catch(console.error);
     return () => { cancelled = true; };
   }, [isAuthenticated]);
@@ -448,6 +478,7 @@ export default function ProfilePage() {
                 <StatsBlock role={role} statsData={profileStats} onNavigate={setActiveTab} t={t} />
                 <CompetitionSection title={t("profile.registeredCompetitions")} items={activeCompetitions} savedIds={savedIds} onSavedChange={handleSavedChange} emptyText={t("profile.noRegistered")} t={t} />
                 <CompetitionSection title={t("profile.archivedCompetitions")} items={archivedCompetitions} savedIds={savedIds} onSavedChange={handleSavedChange} emptyText={t("profile.noArchived")} t={t} />
+                <JudgeWorkPanel items={judgeWork} t={t} />
                 <TeamAccessPanel teams={teams} currentUserId={user?.id} onManageTeam={handleManageTeam} t={t} />
                 <BadgesCertificatesPanel badges={profileBadges} certificates={profileCertificates} stats={profileStats} t={t} />
               </>
@@ -456,6 +487,7 @@ export default function ProfilePage() {
             {(role === "organizer" || role === "admin") && activeTab === "overview" && (
               <>
                 <StatsBlock role={role} statsData={profileStats} t={t} />
+                <JudgeWorkPanel items={judgeWork} t={t} />
                 <TeamAccessPanel teams={teams} currentUserId={user?.id} onManageTeam={handleManageTeam} t={t} />
                 <BadgesCertificatesPanel badges={profileBadges} certificates={profileCertificates} stats={profileStats} t={t} />
               </>

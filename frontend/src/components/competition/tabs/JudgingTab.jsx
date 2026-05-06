@@ -155,6 +155,57 @@ function ScoreTables({ tables = [] }) {
   );
 }
 
+function JudgeInvitePanel({ workspace, onJudgeAssignmentRespond }) {
+  const { t } = useLanguage();
+  const assignments = workspace?.assignments || [];
+  const invited = assignments.filter((assignment) => assignment.status === "invited");
+  const accepted = assignments.filter((assignment) => ["accepted", "completed"].includes(assignment.status));
+  const [savingId, setSavingId] = useState(null);
+  const [message, setMessage] = useState("");
+
+  if (!assignments.length) return null;
+
+  const respond = async (assignmentId, decision) => {
+    if (!onJudgeAssignmentRespond) return;
+    setSavingId(assignmentId);
+    setMessage("");
+    try {
+      await onJudgeAssignmentRespond(assignmentId, decision);
+      setMessage(decision === "accepted" ? t("judgingTab.inviteAccepted") : t("judgingTab.inviteDeclined"));
+    } catch (error) {
+      setMessage(error?.message || t("judgingTab.inviteResponseError"));
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <div className="judge-scorecard judge-invite-panel">
+      <div className="judging-round-heading">
+        <h3>{t("judgingTab.judgeInvitations")}</h3>
+        <span>{accepted.length ? t("judgingTab.acceptedAssignments", { count: accepted.length }) : t("judgingTab.waitingForResponse")}</span>
+      </div>
+      {invited.map((assignment) => (
+        <div className="submission-row" key={assignment.id}>
+          <div>
+            <strong>{assignment.round_title || t("judgingTab.allRounds")}</strong>
+            <small>{optionLabel(t, "review_type", assignment.assignment_type)} - {optionLabel(t, "status", assignment.status)}</small>
+          </div>
+          <div className="scorecard-actions compact">
+            <button type="button" disabled={savingId === assignment.id} onClick={() => respond(assignment.id, "accepted")}>
+              {t("judgingTab.acceptInvite")}
+            </button>
+            <button type="button" disabled={savingId === assignment.id} onClick={() => respond(assignment.id, "declined")}>
+              {t("judgingTab.declineInvite")}
+            </button>
+          </div>
+        </div>
+      ))}
+      {message && <div className="judging-message">{message}</div>}
+    </div>
+  );
+}
+
 function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
   const { t } = useLanguage();
   const workspace = judging?.judge_workspace;
@@ -173,6 +224,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
   const [draftScores, setDraftScores] = useState({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const selectedSubject = subjectsForRound.find((subject) => subject.id === subjectId);
 
   const existingScoreMap = useMemo(() => {
     const map = {};
@@ -218,7 +270,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
     setDraftScores(next);
   }, [criteria, existingScoreMap, reviewType, roundId, subjectId]);
 
-  if (!workspace || !criteria.length || !rounds.length || !subjects.length) {
+  if (!workspace || !criteria.length || !rounds.length || !subjects.length || workspace.can_score === false) {
     return null;
   }
 
@@ -318,6 +370,18 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
       )}
 
       {!!subjectsForRound.length && (
+        <>
+        {selectedSubject && (
+          <div className="judge-material-box">
+            <strong>{selectedSubject.title || selectedSubject.name}</strong>
+            <div>
+              {selectedSubject.file?.url && <a href={selectedSubject.file.url} target="_blank" rel="noreferrer">{selectedSubject.file.original_name || t("judgingTab.file")}</a>}
+              {selectedSubject.repository_url && <a href={selectedSubject.repository_url} target="_blank" rel="noreferrer">{t("judgingTab.repository")}</a>}
+              {selectedSubject.demo_url && <a href={selectedSubject.demo_url} target="_blank" rel="noreferrer">{t("judgingTab.demo")}</a>}
+              {!selectedSubject.file?.url && !selectedSubject.repository_url && !selectedSubject.demo_url && <span>{t("judgingTab.noExternalLink")}</span>}
+            </div>
+          </div>
+        )}
         <div className="judging-table-scroll">
           <table className="judging-score-table scorecard-table">
             <thead>
@@ -370,6 +434,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       <div className="scorecard-actions">
@@ -385,7 +450,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
   );
 }
 
-export default function JudgingTab({ competition, onScoreSubmit, onSubmissionCreate, onScoreDelete }) {
+export default function JudgingTab({ competition, onScoreSubmit, onSubmissionCreate, onScoreDelete, onJudgeAssignmentRespond }) {
   const { t } = useLanguage();
   const judging = competition.judging || {};
   const reviewModes = judging.review_modes || {};
@@ -402,6 +467,7 @@ export default function JudgingTab({ competition, onScoreSubmit, onSubmissionCre
       </div>
 
       <SubmissionPanel competition={competition} judging={judging} onSubmissionCreate={onSubmissionCreate} />
+      <JudgeInvitePanel workspace={judging.judge_workspace} onJudgeAssignmentRespond={onJudgeAssignmentRespond} />
 
       <div className="judging-metric-list">
         {(judging.metrics || []).map((metric) => (
@@ -413,6 +479,11 @@ export default function JudgingTab({ competition, onScoreSubmit, onSubmissionCre
       </div>
 
       <JudgeScorecard judging={judging} onScoreSubmit={onScoreSubmit} onScoreDelete={onScoreDelete} />
+      {judging.judge_workspace && judging.judge_workspace.can_score === false && (
+        <div className="judging-empty">
+          {judging.judge_workspace.judging_window_open ? t("judgingTab.acceptInviteToScore") : t("judgingTab.judgingWindowClosed")}
+        </div>
+      )}
       <ScoreTables tables={roundScores} />
     </section>
   );

@@ -10,7 +10,7 @@ import JoinCompetitionModal from "../components/competition/JoinCompetitionModal
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 
-import { fetchCompetitionDetail, fetchCompetitions, fetchCompetitionParticipants, fetchCompetitionResults, fetchCompetitionJudging, submitCompetitionScore, submitCompetitionWork, deleteCompetitionScore } from "../api/landingApi";
+import { fetchCompetitionDetail, fetchCompetitions, fetchCompetitionParticipants, fetchCompetitionResults, fetchCompetitionJudging, submitCompetitionScore, submitCompetitionWork, deleteCompetitionScore, respondJudgeAssignment } from "../api/landingApi";
 
 function capitalize(value) {
   if (!value) return "";
@@ -257,6 +257,7 @@ export default function CompetitionPage() {
         },
         results: {
           ...(prev?.results || {}),
+          leaderboard: response.leaderboard || prev?.results?.leaderboard || [],
           roundScores: response.round_scores || prev?.results?.roundScores || [],
         },
       }, language, t)
@@ -290,7 +291,22 @@ export default function CompetitionPage() {
         },
         results: {
           ...(prev?.results || {}),
+          leaderboard: response.leaderboard || prev?.results?.leaderboard || [],
           roundScores: response.round_scores || prev?.results?.roundScores || [],
+        },
+      }, language, t)
+    );
+    return response;
+  };
+
+  const handleJudgeAssignmentRespond = async (assignmentId, decision) => {
+    const response = await respondJudgeAssignment(assignmentId, decision);
+    setCompetition((prev) =>
+      enrichCompetition({
+        ...prev,
+        judging: {
+          ...(prev?.judging || {}),
+          judge_workspace: response.judge_workspace || prev?.judging?.judge_workspace || null,
         },
       }, language, t)
     );
@@ -343,6 +359,7 @@ export default function CompetitionPage() {
                 onScoreSubmit={handleScoreSubmit}
                 onSubmissionCreate={handleSubmissionCreate}
                 onScoreDelete={handleScoreDelete}
+                onJudgeAssignmentRespond={handleJudgeAssignmentRespond}
               />
             </main>
 

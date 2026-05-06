@@ -41,6 +41,7 @@ from .views import (
     CompetitionPublishView,
     CompetitionOrganizerApprovalView,
     CompetitionJudgeAssignmentView,
+    CompetitionJudgeAssignmentResponseView,
     CompetitionMaterialUploadView,
     CompetitionInvitationView,
     CompetitionOutboundMessagesView,
@@ -107,5 +108,6 @@ urlpatterns = [
     path("competition-submissions/<int:pk>/review/", CompetitionSubmissionReviewView.as_view(), name="competition-submission-review"),
     path("competitions/<int:pk>/results/", CompetitionResultsView.as_view(), name="competition-results"),
     path("competitions/<int:pk>/judging/", CompetitionJudgingView.as_view(), name="competition-judging"),
+    path("judge-assignments/<int:pk>/respond/", CompetitionJudgeAssignmentResponseView.as_view(), name="judge-assignment-respond"),
     path("competition-scores/<int:pk>/", CompetitionScoreDetailView.as_view(), name="competition-score-detail"),
 ]

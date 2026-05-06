@@ -1532,6 +1532,16 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   cursor: wait;
 }
 
+.scorecard-actions.compact {
+  justify-content: flex-end;
+  margin-top: 0;
+  flex-wrap: wrap;
+}
+
+.scorecard-actions.compact button:last-child {
+  background: #6b7280;
+}
+
 .submission-form {
   display: grid;
   gap: 10px;
@@ -1560,6 +1570,33 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
 .submission-row span {
   color: #4a5160;
   overflow-wrap: anywhere;
+}
+
+.judge-material-box {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #dce3f5;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.judge-material-box div {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.judge-material-box a {
+  color: #1f4fd7;
+  font-weight: 700;
+}
+
+.judging-message {
+  margin-top: 10px;
+  color: #3d4f73;
+  font-weight: 700;
 }
 
 .score-delete-btn {

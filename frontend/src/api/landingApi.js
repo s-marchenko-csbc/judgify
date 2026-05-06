@@ -87,6 +87,13 @@ export function deleteCompetitionScore(id) {
   });
 }
 
+export function respondJudgeAssignment(id, decision) {
+  return apiRequest(`/judge-assignments/${id}/respond/`, {
+    method: "POST",
+    body: JSON.stringify({ decision }),
+  });
+}
+
 export function joinCompetition(id, payload = {}) {
   return apiRequest(`/competitions/${id}/join/`, {
     method: "POST",

@@ -1729,11 +1729,11 @@ class TeamManagementView(APIView):
         return Response(CompetitionTeamSerializer(team).data)
 
 
-def judging_subjects(competition):
+def judging_subjects(competition, request=None):
     submissions = CompetitionSubmission.objects.filter(
         competition=competition,
         status__in=["accepted", "locked"],
-    ).select_related("round", "participant", "team", "submitted_by").order_by(
+    ).select_related("round", "participant", "team", "submitted_by", "file").order_by(
         "round__sort_order", "team__name", "participant__display_name", "-updated_at"
     )
 
@@ -1760,6 +1760,13 @@ def judging_subjects(competition):
             "status": submission.status,
             "repository_url": submission.repository_url,
             "demo_url": submission.demo_url,
+            "file": {
+                "id": submission.file_id,
+                "original_name": submission.file.original_name,
+                "mime_type": submission.file.mime_type,
+                "size_bytes": submission.file.size_bytes,
+                "url": build_file_download_url(submission.file, request),
+            } if submission.file else None,
         })
     return subjects
 
@@ -1771,6 +1778,29 @@ def user_competition_membership(user, competition):
         competition=competition,
         user=user,
     ).select_related("team").first()
+
+
+def judge_has_accepted_assignment(user, competition, round_obj=None):
+    if not user or not user.is_authenticated:
+        return False
+    assignments = CompetitionJudgeAssignment.objects.filter(
+        competition=competition,
+        judge=user,
+        assignment_type="manual",
+        status__in=["accepted", "completed"],
+    )
+    if round_obj:
+        assignments = assignments.filter(Q(round__isnull=True) | Q(round=round_obj))
+    return assignments.exists()
+
+
+def judging_window_open(competition, now=None):
+    now = now or timezone.now()
+    if competition.judging_starts_at and now < competition.judging_starts_at:
+        return False
+    if competition.judging_ends_at and now > competition.judging_ends_at:
+        return False
+    return True
 
 
 def user_allowed_review_types(user, competition):
@@ -1788,7 +1818,13 @@ def user_allowed_review_types(user, competition):
 
     membership = user_competition_membership(user, competition)
     allowed = []
-    if membership and membership.role == "judge" and membership.status == "approved" and competition.manual_judging_enabled:
+    if (
+        membership
+        and membership.role == "judge"
+        and membership.status == "approved"
+        and competition.manual_judging_enabled
+        and judge_has_accepted_assignment(user, competition)
+    ):
         allowed.append("manual")
     if membership and membership.role in ["participant", "team_member"] and membership.status == "approved" and competition.peer_review_enabled:
         allowed.append("peer_review")
@@ -1811,10 +1847,47 @@ def score_visibility_allows_details(request, competition):
     return False
 
 
+def build_live_leaderboard(competition, request=None, limit=10, tables=None):
+    tables = tables if tables is not None else build_round_score_tables(competition, request)
+    totals = {}
+    for table in tables:
+        for row in table.get("rows") or []:
+            score = row.get("total_score")
+            subject = row.get("subject") or {}
+            subject_id = (
+                f"team-{subject.get('team_id')}" if subject.get("team_id")
+                else f"participant-{subject.get('participant_id')}" if subject.get("participant_id")
+                else subject.get("id")
+            )
+            if score is None or not subject_id:
+                continue
+            entry = totals.setdefault(subject_id, {
+                "name": subject.get("title") or subject.get("name") or "Submission",
+                "score": Decimal("0"),
+                "entry_type": "team" if subject.get("type") == "team" or subject.get("team_id") else "individual",
+                "round_number": None,
+            })
+            entry["score"] += Decimal(str(score))
+
+    ranked = sorted(totals.values(), key=lambda item: (-item["score"], item["name"]))[:limit]
+    return [
+        {
+            "id": index,
+            "competition": competition.id,
+            "rank": index,
+            "name": item["name"],
+            "score": float(item["score"]),
+            "entry_type": item["entry_type"],
+            "round_number": item["round_number"],
+        }
+        for index, item in enumerate(ranked, start=1)
+    ]
+
+
 def build_round_score_tables(competition, request=None):
     rounds = list(competition.rounds.all().order_by("sort_order", "id"))
     criteria = list(competition.judging_criteria.all().order_by("sort_order", "id"))
-    subjects = judging_subjects(competition)
+    subjects = judging_subjects(competition, request)
     subject_lookup = {subject["id"]: subject for subject in subjects}
     scores = CompetitionScore.objects.filter(competition=competition).select_related(
         "round",
@@ -1897,12 +1970,21 @@ def build_round_score_tables(competition, request=None):
 def build_judge_workspace(competition, request):
     if not request or not request.user.is_authenticated:
         return None
+    assignments = CompetitionJudgeAssignment.objects.filter(
+        competition=competition,
+        judge=request.user,
+    ).select_related("round", "judge")
     allowed_review_types = user_allowed_review_types(request.user, competition)
-    if not allowed_review_types:
+    has_assignment_context = assignments.exists()
+    if not allowed_review_types and not has_assignment_context:
         return None
 
     membership = user_competition_membership(request.user, competition)
-    subjects = judging_subjects(competition)
+    window_open = judging_window_open(competition)
+    can_see_subjects = bool(allowed_review_types and window_open)
+    if user_can_edit_competition(request.user, competition):
+        can_see_subjects = True
+    subjects = judging_subjects(competition, request) if can_see_subjects else []
     if "peer_review" in allowed_review_types and allowed_review_types == ["peer_review"] and membership:
         subjects = [
             subject for subject in subjects
@@ -1914,14 +1996,11 @@ def build_judge_workspace(competition, request):
         judge=request.user,
     ).select_related("round", "criterion", "subject_participant", "subject_team", "judge")
 
-    assignments = CompetitionJudgeAssignment.objects.filter(
-        competition=competition,
-        judge=request.user,
-    ).select_related("round", "judge")
-
     return {
         "allowed_review_types": allowed_review_types,
-        "default_review_type": allowed_review_types[0],
+        "default_review_type": allowed_review_types[0] if allowed_review_types else "",
+        "can_score": bool(allowed_review_types and window_open),
+        "judging_window_open": window_open,
         "subjects": subjects,
         "assignments": CompetitionJudgeAssignmentSerializer(assignments, many=True).data,
         "existing_scores": CompetitionScoreSerializer(own_scores, many=True, context={"request": request}).data,
@@ -1956,7 +2035,13 @@ class CompetitionSubmissionsView(APIView):
             submissions = CompetitionSubmission.objects.filter(competition=competition)
         else:
             membership = user_competition_membership(request.user, competition)
-            if membership and membership.role == "judge" and membership.status == "approved":
+            if (
+                membership
+                and membership.role == "judge"
+                and membership.status == "approved"
+                and judge_has_accepted_assignment(request.user, competition)
+                and judging_window_open(competition)
+            ):
                 submissions = CompetitionSubmission.objects.filter(competition=competition, status__in=["accepted", "locked"])
             else:
                 submissions = user_submission_queryset(request.user, competition)
@@ -2060,20 +2145,23 @@ class CompetitionResultsView(APIView):
             competition=competition
         ).order_by("round_number", "id")
 
-        leaderboard = CompetitionLeaderboardEntry.objects.filter(
-            competition=competition
-        ).order_by("rank", "id")[:10]
+        round_scores = build_round_score_tables(competition, request)
+        live_leaderboard = build_live_leaderboard(competition, request, tables=round_scores)
+        if not live_leaderboard:
+            live_leaderboard = CompetitionLeaderboardEntrySerializer(
+                CompetitionLeaderboardEntry.objects.filter(
+                    competition=competition
+                ).order_by("rank", "id")[:10],
+                many=True,
+            ).data
 
         return Response({
             "round_history": CompetitionRoundResultSerializer(
                 round_history,
                 many=True,
             ).data,
-            "leaderboard": CompetitionLeaderboardEntrySerializer(
-                leaderboard,
-                many=True,
-            ).data,
-            "round_scores": build_round_score_tables(competition, request),
+            "leaderboard": live_leaderboard,
+            "round_scores": round_scores,
         })
 
 
@@ -2172,6 +2260,34 @@ class ProfileDashboardView(APIView):
                 for item in own_pending
             ]
 
+        judge_assignments = CompetitionJudgeAssignment.objects.filter(
+            judge=user,
+            competition__is_public=True,
+        ).select_related("competition", "round").order_by("-updated_at")[:20]
+        score_counts = {
+            item["competition"]: item
+            for item in CompetitionScore.objects.filter(
+                judge=user,
+                competition__in=[assignment.competition for assignment in judge_assignments],
+            ).values("competition").annotate(total=Count("id"), finalized=Count("id", filter=Q(is_final=True)))
+        }
+        judge_work = [
+            {
+                "id": assignment.id,
+                "competition_id": assignment.competition_id,
+                "competition_name": assignment.competition.name,
+                "round_id": assignment.round_id,
+                "round_title": assignment.round.title if assignment.round else "",
+                "assignment_type": assignment.assignment_type,
+                "status": assignment.status,
+                "judging_starts_at": assignment.competition.judging_starts_at,
+                "judging_ends_at": assignment.competition.judging_ends_at,
+                "scores_count": score_counts.get(assignment.competition_id, {}).get("total", 0),
+                "finalized_count": score_counts.get(assignment.competition_id, {}).get("finalized", 0),
+            }
+            for assignment in judge_assignments
+        ]
+
         return Response({
             "user": serialize_user(user),
             "profile": UserProfileSerializer(profile).data,
@@ -2198,6 +2314,7 @@ class ProfileDashboardView(APIView):
                 many=True,
                 context={"request": request},
             ).data,
+            "judge_work": judge_work,
             "stats": {
                 "active": active.count(),
                 "pending": len(pending_requests),
@@ -2205,6 +2322,8 @@ class ProfileDashboardView(APIView):
                 "archived": archived.count(),
                 "badges": UserBadge.objects.filter(user=user).count(),
                 "certificates": Certificate.objects.filter(user=user).count(),
+                "judge_assignments": len(judge_work),
+                "judge_scores": sum(item["scores_count"] for item in judge_work),
             },
         })
 
@@ -2612,11 +2731,42 @@ class CompetitionJudgeAssignmentView(APIView):
             judge=user,
             assignment_type="manual",
             defaults={
-                "status": "accepted",
+                "status": "invited",
                 "invited_by": request.user,
             },
         )
         return Response(CompetitionParticipantSerializer(participant).data, status=status.HTTP_201_CREATED)
+
+
+class CompetitionJudgeAssignmentResponseView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        assignment = get_object_or_404(
+            CompetitionJudgeAssignment.objects.select_related("competition", "round", "judge"),
+            pk=pk,
+            judge=request.user,
+        )
+        decision = (request.data.get("decision") or request.data.get("status") or "").strip().lower()
+        if decision not in {"accepted", "declined"}:
+            return Response({"detail": "Decision must be accepted or declined."}, status=status.HTTP_400_BAD_REQUEST)
+
+        assignment.status = decision
+        assignment.save(update_fields=["status", "updated_at"])
+
+        membership = CompetitionParticipant.objects.filter(
+            competition=assignment.competition,
+            user=request.user,
+            role="judge",
+        ).first()
+        if membership:
+            membership.status = "approved" if decision == "accepted" else "withdrawn"
+            membership.save(update_fields=["status"])
+
+        return Response({
+            "assignment": CompetitionJudgeAssignmentSerializer(assignment).data,
+            "judge_workspace": build_judge_workspace(assignment.competition, request),
+        })
 
 
 class CompetitionMaterialUploadView(APIView):
@@ -2774,9 +2924,21 @@ class CompetitionJudgingView(APIView):
             ]
         mode = ", ".join(configured_modes) if configured_modes else (metrics[0].mode if metrics else "not configured")
 
-        assignments = CompetitionJudgeAssignment.objects.none()
+        can_view_judging_materials = False
         if request.user.is_authenticated and user_can_edit_competition(request.user, competition):
+            can_view_judging_materials = True
             assignments = CompetitionJudgeAssignment.objects.filter(competition=competition).select_related("round", "judge")
+        else:
+            assignments = CompetitionJudgeAssignment.objects.none()
+            if request.user.is_authenticated and judging_window_open(competition) and user_allowed_review_types(request.user, competition):
+                can_view_judging_materials = True
+
+        submissions_queryset = CompetitionSubmission.objects.none()
+        if can_view_judging_materials:
+            submissions_queryset = CompetitionSubmission.objects.filter(
+                competition=competition,
+                status__in=["accepted", "locked"],
+            ).select_related("round", "participant", "team", "submitted_by", "file")
 
         return Response({
             "mode": mode,
@@ -2790,7 +2952,7 @@ class CompetitionJudgingView(APIView):
             },
             "criteria": CompetitionJudgingCriterionSerializer(criteria, many=True).data,
             "submissions": CompetitionSubmissionSerializer(
-                CompetitionSubmission.objects.filter(competition=competition, status__in=["accepted", "locked"]).select_related("round", "participant", "team", "submitted_by", "file"),
+                submissions_queryset,
                 many=True,
                 context={"request": request},
             ).data,
@@ -2820,6 +2982,10 @@ class CompetitionJudgingView(APIView):
             return Response({"detail": "You are not allowed to submit this type of score."}, status=status.HTTP_403_FORBIDDEN)
 
         round_obj = get_object_or_404(CompetitionRound, pk=request.data.get("round") or request.data.get("round_id"), competition=competition)
+        if not judging_window_open(competition) and not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "Judging is not open for this competition."}, status=status.HTTP_400_BAD_REQUEST)
+        if review_type == "manual" and not user_can_edit_competition(request.user, competition) and not judge_has_accepted_assignment(request.user, competition, round_obj):
+            return Response({"detail": "You must accept the judge invitation before scoring this round."}, status=status.HTTP_403_FORBIDDEN)
         criterion = get_object_or_404(
             CompetitionJudgingCriterion,
             pk=request.data.get("criterion") or request.data.get("criterion_id"),
@@ -2923,9 +3089,11 @@ class CompetitionJudgingView(APIView):
                 defaults={"status": "completed" if score_obj.is_final else "accepted"},
             )
 
+        round_scores = build_round_score_tables(competition, request)
         return Response({
             "score": CompetitionScoreSerializer(score_obj, context={"request": request}).data,
-            "round_scores": build_round_score_tables(competition, request),
+            "round_scores": round_scores,
+            "leaderboard": build_live_leaderboard(competition, request, tables=round_scores),
             "judge_workspace": build_judge_workspace(competition, request),
         }, status=status.HTTP_201_CREATED)
 
@@ -2944,7 +3112,9 @@ class CompetitionScoreDetailView(APIView):
             return Response({"detail": "You can delete only your own score."}, status=status.HTTP_403_FORBIDDEN)
         competition = score_obj.competition
         score_obj.delete()
+        round_scores = build_round_score_tables(competition, request)
         return Response({
-            "round_scores": build_round_score_tables(competition, request),
+            "round_scores": round_scores,
+            "leaderboard": build_live_leaderboard(competition, request, tables=round_scores),
             "judge_workspace": build_judge_workspace(competition, request),
         })

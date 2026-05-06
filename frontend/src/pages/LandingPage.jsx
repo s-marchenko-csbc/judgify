@@ -70,7 +70,7 @@ function usePageTicker(intervalMs = 1000) {
 
 export default function LandingPage() {
   const { user, login, isAuthenticated, authSessionKey } = useAuth();
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
 
   const [filters, setFilters] = useState(initialFilters);
   const debouncedSearch = useDebouncedValue(filters.search, 250);
