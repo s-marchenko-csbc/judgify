@@ -5,6 +5,7 @@ import zipfile
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
+from django.utils.text import slugify
 from django.utils import timezone
 
 from landing.models import (
@@ -229,7 +230,7 @@ class Command(BaseCommand):
         UserBadge.objects.filter(user__username__in=usernames).delete()
         UserFile.objects.filter(owner__username__in=usernames, storage_key__startswith="demo/certificates/").delete()
 
-    def _create_competitions(self, now):
+    def _create_competitions(self, now, upsert=False):
         data = [
             {
                 "name": "AI Battle 2026",
@@ -582,12 +583,20 @@ class Command(BaseCommand):
 
         competitions = []
         for item in data:
-            competitions.append(Competition.objects.create(
-                is_public=True,
-                show_in_catalog=True,
-                organizer_approval_status="approved",
+            defaults = {
+                "is_public": True,
+                "show_in_catalog": True,
+                "organizer_approval_status": "approved",
                 **item,
-            ))
+            }
+            if upsert:
+                competition, _ = Competition.objects.update_or_create(
+                    slug=slugify(item["name"]),
+                    defaults=defaults,
+                )
+                competitions.append(competition)
+            else:
+                competitions.append(Competition.objects.create(**defaults))
         return competitions
 
     def _assign_all_competitions_to_demo_organizer(self, competitions, organizer_user):
@@ -730,19 +739,22 @@ class Command(BaseCommand):
                 active_deadline = cursor
 
             is_stream_round = bool(stream_enabled and cursor <= now <= next_cursor)
-            CompetitionRound.objects.create(
+            CompetitionRound.objects.update_or_create(
                 competition=comp,
-                title=f"Round {round_number}",
-                description="Demo stage with sequential deadlines.",
-                starts_at=cursor,
-                ends_at=next_cursor,
-                submission_required=True,
-                max_attempts=round_number,
-                is_stream_enabled=is_stream_round,
-                stream_url="https://www.youtube.com/watch?v=jfKfPfyJRdk" if is_stream_round else "",
-                stream_embed_url="https://www.youtube.com/embed/jfKfPfyJRdk" if is_stream_round else "",
-                stream_label="Demo live stream" if is_stream_round else "",
                 sort_order=round_index,
+                defaults={
+                    "title": f"Round {round_number}",
+                    "description": "Demo stage with sequential deadlines.",
+                    "starts_at": cursor,
+                    "ends_at": next_cursor,
+                    "status": "draft",
+                    "submission_required": True,
+                    "max_attempts": round_number,
+                    "is_stream_enabled": is_stream_round,
+                    "stream_url": "https://www.youtube.com/watch?v=jfKfPfyJRdk" if is_stream_round else "",
+                    "stream_embed_url": "https://www.youtube.com/embed/jfKfPfyJRdk" if is_stream_round else "",
+                    "stream_label": "Demo live stream" if is_stream_round else "",
+                },
             )
             cursor = next_cursor
 
