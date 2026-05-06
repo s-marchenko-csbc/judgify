@@ -9,7 +9,7 @@ from django.contrib.auth import authenticate, get_user_model, login, logout, pas
 from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import Q, F, ExpressionWrapper, FloatField
+from django.db.models import Q, F, Count, ExpressionWrapper, FloatField
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.middleware.csrf import get_token
@@ -340,7 +340,76 @@ def serialize_user(user):
         "avatar": UserProfileSerializer(profile).data.get("avatar"),
         "avatarUrl": UserProfileSerializer(profile).data.get("avatar_url"),
         "isRegistered": True,
+        "isStaff": user.is_staff,
+        "isSuperuser": user.is_superuser,
+        "isActive": user.is_active,
     }
+
+
+def serialize_admin_user(user):
+    profile = get_or_create_profile(user)
+    return {
+        "id": user.id,
+        "username": user.get_username(),
+        "email": getattr(user, "email", ""),
+        "displayName": profile.display_name or user.get_full_name() or user.get_username(),
+        "primaryRole": profile.primary_role,
+        "isStaff": user.is_staff,
+        "isSuperuser": user.is_superuser,
+        "isActive": user.is_active,
+        "dateJoined": user.date_joined,
+        "lastLogin": user.last_login,
+        "competitionsCount": getattr(user, "competitions_count", 0),
+        "requestsCount": getattr(user, "requests_count", 0),
+    }
+
+
+def serialize_admin_competition(competition):
+    organizer_names = [
+        participant.display_name
+        for participant in getattr(competition, "prefetched_organizers", [])
+    ]
+    return {
+        "id": competition.id,
+        "name": competition.name,
+        "slug": competition.slug,
+        "status": competition.status,
+        "visibilityMode": competition.visibility_mode,
+        "showInCatalog": competition.show_in_catalog,
+        "isPublic": competition.is_public,
+        "organizerApprovalStatus": competition.organizer_approval_status,
+        "organizers": organizer_names,
+        "participantsCount": competition.participants_count,
+        "submissionsOpen": competition.submissions_open,
+        "resultsFrozen": competition.results_frozen,
+        "startsAt": competition.starts_at,
+        "endsAt": competition.ends_at,
+        "updatedAt": competition.updated_at,
+    }
+
+
+def serialize_admin_message(message):
+    return {
+        "id": message.id,
+        "competition": message.competition_id,
+        "competitionName": message.competition.name if message.competition else "",
+        "recipientEmail": message.recipient_email,
+        "channel": message.channel,
+        "subject": message.subject,
+        "body": message.body,
+        "status": message.status,
+        "errorMessage": message.error_message,
+        "queuedAt": message.queued_at,
+        "sentAt": message.sent_at,
+        "createdAt": message.created_at,
+    }
+
+
+def ensure_admin_request(request):
+    if not user_is_admin(request.user):
+        return Response({"detail": "Administrator access required."}, status=status.HTTP_403_FORBIDDEN)
+    return None
+
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
 class CsrfView(APIView):
@@ -560,6 +629,244 @@ class HealthCheckView(APIView):
             "database": "ok",
             "competitionsCount": competitions_count,
         })
+
+
+class AdminOverviewView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+
+        return Response({
+            "stats": {
+                "users": get_user_model().objects.count(),
+                "activeUsers": get_user_model().objects.filter(is_active=True).count(),
+                "competitions": Competition.objects.count(),
+                "pendingCompetitions": Competition.objects.filter(organizer_approval_status="pending").count(),
+                "queuedMessages": OutboundMessage.objects.filter(status="queued").count(),
+                "failedMessages": OutboundMessage.objects.filter(status="failed").count(),
+            },
+            "recentMessages": [
+                serialize_admin_message(message)
+                for message in OutboundMessage.objects.select_related("competition").order_by("-created_at")[:8]
+            ],
+        })
+
+
+class AdminUsersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+        User = get_user_model()
+        search = (request.query_params.get("search") or "").strip()
+        role = (request.query_params.get("role") or "").strip()
+        users = User.objects.select_related("profile").annotate(
+            competitions_count=Count("competition_memberships", distinct=True),
+            requests_count=Count("competition_join_requests", distinct=True),
+        ).order_by("-date_joined")
+        if search:
+            users = users.filter(
+                Q(username__icontains=search)
+                | Q(email__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(profile__display_name__icontains=search)
+            )
+        if role:
+            users = users.filter(profile__primary_role=role)
+        return Response([serialize_admin_user(user) for user in users[:100]])
+
+
+class AdminUserDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+
+        User = get_user_model()
+        target = get_object_or_404(User, pk=pk)
+        profile = get_or_create_profile(target)
+        data = request.data
+        user_changed = []
+        profile_changed = []
+
+        if "email" in data:
+            target.email = (data.get("email") or "").strip()
+            user_changed.append("email")
+        if "displayName" in data:
+            display_name = (data.get("displayName") or "").strip()
+            profile.display_name = display_name
+            target.first_name = display_name
+            profile_changed.append("display_name")
+            user_changed.append("first_name")
+        if "isActive" in data:
+            next_active = bool(data.get("isActive"))
+            if target.id == request.user.id and not next_active:
+                return Response({"detail": "You cannot deactivate your own administrator account."}, status=status.HTTP_400_BAD_REQUEST)
+            target.is_active = next_active
+            user_changed.append("is_active")
+        if "isStaff" in data:
+            next_staff = bool(data.get("isStaff"))
+            if target.id == request.user.id and not next_staff:
+                return Response({"detail": "You cannot remove staff access from yourself."}, status=status.HTTP_400_BAD_REQUEST)
+            target.is_staff = next_staff
+            user_changed.append("is_staff")
+        if "primaryRole" in data:
+            next_role = data.get("primaryRole")
+            valid_roles = {choice[0] for choice in UserProfile.ROLE_CHOICES}
+            if next_role not in valid_roles:
+                return Response({"detail": "Unsupported profile role."}, status=status.HTTP_400_BAD_REQUEST)
+            if target.id == request.user.id and next_role != "admin":
+                return Response({"detail": "You cannot remove administrator role from yourself."}, status=status.HTTP_400_BAD_REQUEST)
+            profile.primary_role = next_role
+            profile_changed.append("primary_role")
+            if next_role == "admin" and not target.is_staff:
+                target.is_staff = True
+                user_changed.append("is_staff")
+
+        if user_changed:
+            target.save(update_fields=list(dict.fromkeys(user_changed)))
+        if profile_changed:
+            profile.save(update_fields=list(dict.fromkeys([*profile_changed, "updated_at"])))
+        target.competitions_count = CompetitionParticipant.objects.filter(user=target).count()
+        target.requests_count = CompetitionJoinRequest.objects.filter(user=target).count()
+        return Response(serialize_admin_user(target))
+
+
+class AdminCompetitionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+        search = (request.query_params.get("search") or "").strip()
+        status_filter = (request.query_params.get("status") or "").strip()
+        competitions = Competition.objects.all().prefetch_related("participant_entries").order_by("-updated_at")
+        if search:
+            competitions = competitions.filter(Q(name__icontains=search) | Q(short_description__icontains=search))
+        if status_filter:
+            competitions = competitions.filter(status=status_filter)
+        items = list(competitions[:100])
+        for competition in items:
+            competition.prefetched_organizers = [
+                participant for participant in competition.participant_entries.all()
+                if participant.role == "organizer"
+            ][:4]
+        return Response([serialize_admin_competition(competition) for competition in items])
+
+
+class AdminCompetitionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+        competition = get_object_or_404(Competition, pk=pk)
+        data = request.data
+        allowed_values = {
+            "status": {choice[0] for choice in Competition.STATUS_CHOICES},
+            "visibilityMode": {choice[0] for choice in Competition.VISIBILITY_MODE_CHOICES},
+            "organizerApprovalStatus": {choice[0] for choice in Competition.ORGANIZER_APPROVAL_CHOICES},
+        }
+        changed = []
+        if "status" in data:
+            if data["status"] not in allowed_values["status"]:
+                return Response({"detail": "Unsupported competition status."}, status=status.HTTP_400_BAD_REQUEST)
+            competition.status = data["status"]
+            changed.append("status")
+        if "visibilityMode" in data:
+            if data["visibilityMode"] not in allowed_values["visibilityMode"]:
+                return Response({"detail": "Unsupported visibility mode."}, status=status.HTTP_400_BAD_REQUEST)
+            competition.visibility_mode = data["visibilityMode"]
+            competition.is_public = data["visibilityMode"] == "public"
+            changed.extend(["visibility_mode", "is_public"])
+        if "showInCatalog" in data:
+            competition.show_in_catalog = bool(data["showInCatalog"])
+            changed.append("show_in_catalog")
+        if "organizerApprovalStatus" in data:
+            if data["organizerApprovalStatus"] not in allowed_values["organizerApprovalStatus"]:
+                return Response({"detail": "Unsupported approval status."}, status=status.HTTP_400_BAD_REQUEST)
+            competition.organizer_approval_status = data["organizerApprovalStatus"]
+            competition.organizer_approved_by = request.user
+            competition.organizer_approved_at = timezone.now()
+            changed.extend(["organizer_approval_status", "organizer_approved_by", "organizer_approved_at"])
+        if "resultsFrozen" in data:
+            competition.results_frozen = bool(data["resultsFrozen"])
+            changed.append("results_frozen")
+
+        if changed:
+            changed.append("updated_at")
+            competition.save(update_fields=list(dict.fromkeys(changed)))
+            recompute_competition_timing(competition, save=True)
+        competition.prefetched_organizers = list(CompetitionParticipant.objects.filter(competition=competition, role="organizer")[:4])
+        return Response(serialize_admin_competition(competition))
+
+
+class AdminMessagesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+        messages = OutboundMessage.objects.select_related("competition").order_by("-created_at")[:100]
+        return Response([serialize_admin_message(message) for message in messages])
+
+    def post(self, request):
+        denied = ensure_admin_request(request)
+        if denied:
+            return denied
+        subject = (request.data.get("subject") or "").strip()
+        body = (request.data.get("body") or "").strip()
+        channel = request.data.get("channel") or "email"
+        message_status = request.data.get("status") or "queued"
+        if channel not in {choice[0] for choice in OutboundMessage.CHANNEL_CHOICES}:
+            return Response({"detail": "Unsupported message channel."}, status=status.HTTP_400_BAD_REQUEST)
+        if message_status not in {"draft", "queued"}:
+            return Response({"detail": "Messages can be created as draft or queued."}, status=status.HTTP_400_BAD_REQUEST)
+        if not subject or not body:
+            return Response({"detail": "Subject and body are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        competition = None
+        if request.data.get("competition"):
+            competition = get_object_or_404(Competition, pk=request.data.get("competition"))
+
+        recipient_emails = request.data.get("recipientEmails") or request.data.get("recipients") or []
+        if isinstance(recipient_emails, str):
+            recipient_emails = [item.strip() for item in recipient_emails.replace(";", ",").split(",") if item.strip()]
+        target_role = request.data.get("targetRole") or ""
+        if target_role:
+            users = get_user_model().objects.filter(email__gt="", is_active=True).select_related("profile")
+            if target_role != "all":
+                users = users.filter(profile__primary_role=target_role)
+            recipient_emails.extend(users.values_list("email", flat=True))
+        recipient_emails = sorted({email.strip().lower() for email in recipient_emails if email and "@" in email})
+        if not recipient_emails:
+            return Response({"detail": "At least one recipient email or target role is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        now = timezone.now()
+        messages = [
+            OutboundMessage(
+                competition=competition,
+                recipient_email=email,
+                channel=channel,
+                subject=subject,
+                body=body,
+                status=message_status,
+                queued_at=now if message_status == "queued" else None,
+            )
+            for email in recipient_emails[:500]
+        ]
+        created = OutboundMessage.objects.bulk_create(messages)
+        return Response([serialize_admin_message(message) for message in created], status=status.HTTP_201_CREATED)
 
 
 class LandingCompetitionsView(APIView):

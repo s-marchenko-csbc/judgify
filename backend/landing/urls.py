@@ -3,6 +3,12 @@ from django.urls import path
 from .views import (
     CsrfView,
     HealthCheckView,
+    AdminCompetitionDetailView,
+    AdminCompetitionsView,
+    AdminMessagesView,
+    AdminOverviewView,
+    AdminUserDetailView,
+    AdminUsersView,
     UserFileDownloadView,
     CurrentUserView,
     DevLoginView,
@@ -41,6 +47,13 @@ from .views import (
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="api-health"),
+    # admin panel
+    path("admin/overview/", AdminOverviewView.as_view(), name="admin-overview"),
+    path("admin/users/", AdminUsersView.as_view(), name="admin-users"),
+    path("admin/users/<int:pk>/", AdminUserDetailView.as_view(), name="admin-user-detail"),
+    path("admin/competitions/", AdminCompetitionsView.as_view(), name="admin-competitions"),
+    path("admin/competitions/<int:pk>/", AdminCompetitionDetailView.as_view(), name="admin-competition-detail"),
+    path("admin/messages/", AdminMessagesView.as_view(), name="admin-messages"),
     # auth/session
     path("auth/csrf/", CsrfView.as_view(), name="auth-csrf"),
     path("auth/me/", CurrentUserView.as_view(), name="auth-me"),

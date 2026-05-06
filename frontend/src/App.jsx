@@ -7,6 +7,7 @@ import { API_BASE } from "./api/client";
 import { useLanguage } from "./context/LanguageContext";
 
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
+const AdminPage = lazy(() => import("./pages/AdminPage"));
 const CompetitionPage = lazy(() => import("./pages/CompetitionPage"));
 const CompetitionBuilderPage = lazy(() => import("./pages/CompetitionBuilderPage"));
 
@@ -64,6 +65,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="/competitions/new" element={<CompetitionBuilderPage />} />
           <Route path="/competitions/:id/edit" element={<CompetitionBuilderPage />} />
           <Route path="/competitions/:id" element={<CompetitionPage />} />

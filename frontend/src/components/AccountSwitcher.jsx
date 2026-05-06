@@ -70,7 +70,7 @@ function Avatar({ user, t, className = "account-avatar" }) {
   return <span className={className}>{initials(user, t)}</span>;
 }
 
-function AccountMenu({ user, onProfile, onSwitchAccount, onLogout, style, menuRef, t }) {
+function AccountMenu({ user, canAdmin, onAdmin, onProfile, onSwitchAccount, onLogout, style, menuRef, t }) {
   const switchableAccounts = uniqueAccounts([...(user ? [user] : []), ...demoAccounts]);
   const roleLabel = (role) => t(`roles.${role || "participant"}`, { defaultValue: role || "participant" });
 
@@ -88,6 +88,11 @@ function AccountMenu({ user, onProfile, onSwitchAccount, onLogout, style, menuRe
       <button type="button" className="account-profile-link" onClick={onProfile}>
         {t("account.openProfile")}
       </button>
+      {canAdmin && (
+        <button type="button" className="account-profile-link secondary" onClick={onAdmin}>
+          {t("account.adminPanel", { defaultValue: "Admin panel" })}
+        </button>
+      )}
 
       <div className="account-menu-divider" />
       <span className="account-menu-caption">{t("account.switchAccount")}</span>
@@ -137,6 +142,7 @@ export default function AccountSwitcher({ compact = false }) {
   const [menuStyle, setMenuStyle] = useState({});
   const triggerRef = useRef(null);
   const menuRef = useRef(null);
+  const canAdmin = Boolean(user?.primaryRole === "admin" || user?.isStaff || user?.isSuperuser);
 
   const updateMenuPosition = () => {
     const rect = triggerRef.current?.getBoundingClientRect();
@@ -193,6 +199,11 @@ export default function AccountSwitcher({ compact = false }) {
     setOpen(false);
   };
 
+  const handleAdmin = () => {
+    navigate("/admin");
+    setOpen(false);
+  };
+
   return (
     <div className={`account-switcher ${compact ? "compact" : ""}`}>
       <button
@@ -209,8 +220,10 @@ export default function AccountSwitcher({ compact = false }) {
       {open && createPortal(
         <AccountMenu
           user={user}
+          canAdmin={canAdmin}
           style={menuStyle}
           menuRef={menuRef}
+          onAdmin={handleAdmin}
           onProfile={handleProfile}
           onSwitchAccount={switchAccount}
           onLogout={handleLogout}
