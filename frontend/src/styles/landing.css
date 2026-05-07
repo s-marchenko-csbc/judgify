@@ -3905,6 +3905,120 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   }
 }
 
+.landing-results-enter {
+  animation: landingFadeIn .24s ease both;
+}
+
+.landing-results-enter .competition-card {
+  animation: landingCardIn .28s ease both;
+}
+
+.landing-loading-grid {
+  opacity: .96;
+}
+
+.landing-skeleton-grid {
+  align-items: stretch;
+}
+
+.landing-skeleton-card,
+.landing-skeleton-panel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid rgba(99, 142, 203, .18);
+  background: rgba(240, 243, 250, .78);
+  box-shadow: 0 18px 44px rgba(10, 11, 36, .1);
+}
+
+.landing-skeleton-card {
+  min-height: 330px;
+  padding: 18px;
+}
+
+.landing-skeleton-card::after,
+.landing-skeleton-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .58), transparent);
+  animation: landingSkeletonSweep 1.15s ease-in-out infinite;
+}
+
+.landing-skeleton-cover {
+  height: 170px;
+  margin: -18px -18px 18px;
+  background: linear-gradient(135deg, rgba(177, 201, 239, .92), rgba(99, 142, 203, .55));
+}
+
+.landing-skeleton-line {
+  height: 14px;
+  width: 68%;
+  margin: 12px 0;
+  border-radius: 999px;
+  background: rgba(99, 142, 203, .24);
+}
+
+.landing-skeleton-line.wide {
+  width: 88%;
+  height: 18px;
+}
+
+.landing-skeleton-line.short {
+  width: 42%;
+}
+
+.landing-skeleton-sidebar {
+  pointer-events: none;
+}
+
+.landing-skeleton-panel {
+  height: 220px;
+}
+
+.landing-skeleton-panel.short {
+  height: 150px;
+}
+
+.landing-empty-state {
+  grid-column: 1 / -1;
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(99, 142, 203, .36);
+  border-radius: 24px;
+  background: rgba(240, 243, 250, .58);
+  color: #395886;
+  font-weight: 800;
+}
+
+@keyframes landingSkeletonSweep {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes landingFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes landingCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .recent-section-title {
   margin: 8px 2px 4px;
   color: #395886;

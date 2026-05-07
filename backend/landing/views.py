@@ -1239,7 +1239,7 @@ class AdminFilterOptionsView(APIView):
 
 class LandingCompetitionsView(APIView):
     permission_classes = [AllowAny]
-    CACHE_TTL_SECONDS = 30
+    CACHE_TTL_SECONDS = 5
     CARD_QUERY_FIELDS = [
         "id", "slug", "name", "short_description", "cover_image", "status",
         "event_type", "participation_type", "access_mode", "visibility_mode",

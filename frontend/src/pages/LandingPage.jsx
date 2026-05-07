@@ -27,11 +27,109 @@ const initialFilters = {
   language: [],
 };
 
+const statusTabs = {
+  registration_open: ["registration_open"],
+  active: ["active"],
+  judging: ["judging"],
+  upcoming: ["upcoming", "published"],
+  finished: ["finished"],
+  archived: ["archived"],
+};
+
 function mergeSavedState(items, savedIds) {
   return (items || []).map((item) => ({
     ...item,
     is_saved: savedIds.has(item.id) || Boolean(item.is_saved),
   }));
+}
+
+function toTime(value) {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function isWithin(start, end, now) {
+  return Boolean(start && end && start <= now && now <= end);
+}
+
+function deriveTimedCompetition(item, now) {
+  if (!item || ["draft", "archived"].includes(item.status)) return item;
+
+  const startsAt = toTime(item.starts_at);
+  const endsAt = toTime(item.ends_at);
+  const registrationStartsAt = toTime(item.registration_starts_at);
+  const registrationEndsAt = toTime(item.registration_ends_at);
+  const judgingStartsAt = toTime(item.judging_starts_at);
+  const judgingEndsAt = toTime(item.judging_ends_at);
+  const resultsPublicAt = toTime(item.results_public_at);
+
+  const registrationOpen = registrationStartsAt && registrationEndsAt
+    ? registrationStartsAt <= now && now <= registrationEndsAt
+    : registrationEndsAt
+      ? now <= registrationEndsAt
+      : registrationStartsAt
+        ? registrationStartsAt <= now && (!startsAt || now < startsAt)
+        : Boolean(item.registration_open);
+
+  const judgingOpen = isWithin(judgingStartsAt, judgingEndsAt, now);
+  let status = item.status || "upcoming";
+
+  if (status === "judging" && judgingOpen) {
+    status = "judging";
+  } else if (startsAt && now < startsAt) {
+    status = registrationOpen ? "registration_open" : "upcoming";
+  } else if (isWithin(startsAt, endsAt, now)) {
+    status = "active";
+  } else if (judgingOpen) {
+    status = "judging";
+  } else if (endsAt && now > endsAt) {
+    if (judgingStartsAt && now < judgingStartsAt) {
+      status = "judging";
+    } else if (judgingEndsAt && now <= judgingEndsAt) {
+      status = "judging";
+    } else {
+      status = "finished";
+    }
+  }
+
+  let timerDeadline = null;
+  if (status === "registration_open") timerDeadline = item.registration_ends_at || item.starts_at;
+  else if (status === "upcoming") timerDeadline = item.starts_at;
+  else if (status === "active") timerDeadline = item.timer_deadline || item.ends_at;
+  else if (status === "judging") timerDeadline = item.judging_ends_at || item.results_public_at;
+  else if (status === "finished") timerDeadline = resultsPublicAt && resultsPublicAt > now ? item.results_public_at : null;
+
+  return {
+    ...item,
+    status,
+    timer_deadline: timerDeadline,
+    registration_open: registrationOpen,
+    submissions_open: status === "active" ? item.submissions_open : false,
+  };
+}
+
+function LandingSkeleton({ withSidebar = false }) {
+  return (
+    <div className={`competition-grid landing-loading-grid ${withSidebar ? "with-sidebar" : ""}`} aria-hidden="true">
+      <div className="cards-grid landing-skeleton-grid">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div className="landing-skeleton-card" key={index}>
+            <div className="landing-skeleton-cover" />
+            <div className="landing-skeleton-line wide" />
+            <div className="landing-skeleton-line" />
+            <div className="landing-skeleton-line short" />
+          </div>
+        ))}
+      </div>
+      {withSidebar && (
+        <aside className="right-sidebar landing-skeleton-sidebar">
+          <div className="landing-skeleton-panel" />
+          <div className="landing-skeleton-panel short" />
+        </aside>
+      )}
+    </div>
+  );
 }
 
 function useDebouncedValue(value, delay = 250) {
@@ -98,6 +196,16 @@ export default function LandingPage() {
     [debouncedSearch, filters.tab, filters.event_type, filters.participation_type, filters.industry, filters.difficulty, filters.language]
   );
 
+  const timedCompetitions = useMemo(
+    () => competitions.map((item) => deriveTimedCompetition(item, now)),
+    [competitions, now]
+  );
+
+  const displayedCompetitions = useMemo(() => {
+    const tabStatuses = statusTabs[filters.tab] || statusTabs.registration_open;
+    return timedCompetitions.filter((item) => tabStatuses.includes(item.status));
+  }, [filters.tab, timedCompetitions]);
+
   useEffect(() => {
     fetchLandingFilters(language).then(setFilterOptions).catch(console.error);
   }, [language]);
@@ -148,6 +256,26 @@ export default function LandingPage() {
       window.clearInterval(intervalId);
     };
   }, [authSessionKey, refreshCompetitions]);
+
+  useEffect(() => {
+    const currentTime = Date.now();
+    const nearestDeadline = competitions.reduce((nearest, item) => {
+      const deadline = toTime(item.timer_deadline);
+      if (!deadline || deadline <= currentTime) return nearest;
+      return Math.min(nearest, deadline);
+    }, Number.POSITIVE_INFINITY);
+
+    if (!Number.isFinite(nearestDeadline)) return undefined;
+
+    const delay = Math.max(500, Math.min(nearestDeadline - currentTime + 1200, 60000));
+    const timer = window.setTimeout(() => {
+      if (document.visibilityState === "visible") {
+        refreshCompetitions({ showLoader: false });
+      }
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [competitions, refreshCompetitions]);
 
   useEffect(() => {
     setCompetitions((prev) => mergeSavedState(prev, isAuthenticated ? savedIds : new Set()));
@@ -314,15 +442,15 @@ export default function LandingPage() {
           />
 
           {loading ? (
-            <div>{t("landing.loading")}</div>
+            <LandingSkeleton withSidebar={isAuthenticated} />
           ) : (
             <div
-              className={`competition-grid ${
+              className={`competition-grid landing-results-enter ${
                 isAuthenticated ? "with-sidebar" : ""
               }`}
             >
               <div className="cards-grid">
-                {competitions.map((item) => (
+                {displayedCompetitions.map((item) => (
                   <CompetitionCard
                     key={item.id}
                     item={item}
@@ -330,6 +458,11 @@ export default function LandingPage() {
                     onSavedChange={handleSavedChange}
                   />
                 ))}
+                {!displayedCompetitions.length && (
+                  <div className="landing-empty-state">
+                    {t("landing.empty", { defaultValue: "No competitions in this tab yet." })}
+                  </div>
+                )}
               </div>
 
               {isAuthenticated && (
