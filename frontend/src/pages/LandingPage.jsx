@@ -79,16 +79,7 @@ export default function LandingPage() {
   const [savedIds, setSavedIds] = useState(() => new Set());
   const savedIdsRef = useRef(savedIds);
   const loadSeqRef = useRef(0);
-  const tickerIntervalMs = useMemo(() => {
-    const currentTime = Date.now();
-    const hasUrgentTimer = competitions.some((item) => {
-      if (!item.timer_deadline || item.status === "archived") return false;
-      const remaining = new Date(item.timer_deadline).getTime() - currentTime;
-      return remaining > 0 && remaining <= 5 * 60 * 1000;
-    });
-    return hasUrgentTimer ? 1000 : 30000;
-  }, [competitions]);
-  const now = usePageTicker(tickerIntervalMs);
+  const now = usePageTicker(1000);
   const [loading, setLoading] = useState(false);
 
   const [authStep, setAuthStep] = useState(null);

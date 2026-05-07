@@ -3871,6 +3871,40 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   overflow: visible;
 }
 
+.landing-layout {
+  grid-template-columns: minmax(260px, 310px) minmax(0, 1fr);
+  width: 100%;
+}
+
+.landing-main {
+  min-width: 0;
+  width: 100%;
+}
+
+.competition-tabs {
+  display: grid !important;
+  grid-template-columns: repeat(6, minmax(128px, 1fr));
+  width: 100%;
+  min-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.competition-tabs .tab-btn {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .landing-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .competition-tabs {
+    grid-template-columns: repeat(6, minmax(118px, 1fr));
+  }
+}
+
 .recent-section-title {
   margin: 8px 2px 4px;
   color: #395886;
