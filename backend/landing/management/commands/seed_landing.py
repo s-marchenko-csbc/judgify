@@ -944,9 +944,9 @@ class Command(BaseCommand):
                 ],
             )
             rules_file, _ = UserFile.objects.update_or_create(
-                owner=owner,
                 storage_key=f"demo/materials/{comp.slug or comp.id}/rules.pdf",
                 defaults={
+                    "owner": owner,
                     "original_name": f"{comp.slug or comp.id}-rules.pdf",
                     "mime_type": "application/pdf",
                     "size_bytes": len(rules_content),
@@ -972,9 +972,9 @@ class Command(BaseCommand):
 
             starter_content = build_demo_zip(comp)
             starter_file, _ = UserFile.objects.update_or_create(
-                owner=owner,
                 storage_key=f"demo/materials/{comp.slug or comp.id}/starter.zip",
                 defaults={
+                    "owner": owner,
                     "original_name": f"{comp.slug or comp.id}-starter.zip",
                     "mime_type": "application/zip",
                     "size_bytes": len(starter_content),
@@ -1330,9 +1330,9 @@ class Command(BaseCommand):
                     submission_content = self._build_submission_file(comp, round_obj, subject_name)
                     file_key = f"demo/submissions/{comp.slug or comp.id}/round-{round_obj.sort_order + 1}/{slugify(subject_name)}.md"
                     submission_file, _ = UserFile.objects.update_or_create(
-                        owner=submitter,
                         storage_key=file_key,
                         defaults={
+                            "owner": submitter,
                             "original_name": f"{slugify(subject_name)}-round-{round_obj.sort_order + 1}.md",
                             "mime_type": "text/markdown",
                             "size_bytes": len(submission_content),
@@ -1598,9 +1598,9 @@ class Command(BaseCommand):
             edge_status = ["created", "validated", "rejected", "accepted", "locked"][index % 5]
             content = self._build_submission_file(comp, first_round, f"{subject_name} {edge_status}")
             file_obj, _ = UserFile.objects.update_or_create(
-                owner=submitter,
                 storage_key=f"demo/submissions/{comp.slug or comp.id}/edge-{edge_status}.md",
                 defaults={
+                    "owner": submitter,
                     "original_name": f"{slugify(comp.name)}-{edge_status}-edge.md",
                     "mime_type": "text/markdown",
                     "size_bytes": len(content),
@@ -1655,9 +1655,9 @@ class Command(BaseCommand):
             comp = competitions[index % len(competitions)]
             feedback = f"Feedback note for {user.get_username()} in {comp.name}".encode("utf-8")
             feedback_file, _ = UserFile.objects.update_or_create(
-                owner=user,
                 storage_key=f"demo/user-materials/{user.username}-{slugify(comp.name)}-feedback.txt",
                 defaults={
+                    "owner": user,
                     "original_name": f"{user.username}-feedback.txt",
                     "mime_type": "text/plain",
                     "size_bytes": len(feedback),
@@ -1736,9 +1736,9 @@ class Command(BaseCommand):
                     ],
                 )
                 cert_file, _ = UserFile.objects.update_or_create(
-                    owner=award_user,
                     storage_key=f"demo/certificates/{award_user.username}-{cert_idx}.pdf",
                     defaults={
+                        "owner": award_user,
                         "original_name": f"{award_user.username}-certificate-{cert_idx}.pdf",
                         "mime_type": "application/pdf",
                         "size_bytes": len(cert_content),
