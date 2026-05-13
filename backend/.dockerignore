@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env*
+__pycache__
+.python-packages
+.pip-cache
+.tmp
+*.pyc
+*.pyo
+*.pyd
+build/
+dist/
+venv/
+node_modules/
