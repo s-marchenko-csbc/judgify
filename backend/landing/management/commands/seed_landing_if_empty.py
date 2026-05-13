@@ -20,11 +20,13 @@ class Command(BaseCommand):
         judge_users = seeder._ensure_demo_judges()
         competitions = seeder._create_competitions(now, upsert=True)
         seeder._assign_all_competitions_to_demo_organizer(competitions, demo_users["organizer"])
+        seeder._create_admin_pending_proposal(now)
         seeder._create_rounds_and_schedule(competitions, now)
         seeder._create_submission_settings_and_criteria(competitions)
         seeder._create_materials(competitions, demo_users["organizer"])
         seeder._create_saved_and_recent(competitions, demo_users["participant"], demo_users["viewer"])
         seeder._create_team_memberships_and_pending_requests(competitions, demo_users, fake_users)
+        seeder._ensure_demo_team_result_subjects(competitions, fake_users)
         seeder._create_announcements_and_comments(competitions, demo_users, fake_users)
         seeder._create_demo_submissions_scores_and_metrics(
             competitions,
@@ -33,7 +35,9 @@ class Command(BaseCommand):
             demo_users["organizer"],
             now,
         )
+        seeder._create_scenario_coverage_records(competitions, demo_users, fake_users, judge_users, now)
         seeder._refresh_competition_counters(competitions)
+        seeder._create_awards_and_certificates(competitions, demo_users, fake_users)
 
         self.stdout.write(self.style.SUCCESS(
             f"Demo catalog refreshed; {len(competitions)} public demo competitions are available."

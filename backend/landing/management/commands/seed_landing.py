@@ -15,6 +15,7 @@ from landing.models import (
     Competition,
     CompetitionAnnouncement,
     CompetitionAnnouncementComment,
+    CompetitionInvitation,
     CompetitionJoinRequest,
     CompetitionJudgingCriterion,
     CompetitionJudgingMetric,
@@ -27,10 +28,13 @@ from landing.models import (
     CompetitionSubmission,
     CompetitionSubmissionSettings,
     CompetitionTeam,
+    OutboundMessage,
     RecentlyViewedCompetition,
     RecentlyViewedMaterial,
+    UserCompetitionWatch,
     UserBadge,
     UserFile,
+    UserMaterial,
     UserProfile,
     UserSavedCompetition,
 )
@@ -154,12 +158,24 @@ FAKE_PARTICIPANTS = [
     ("taras_lysenko", "taras.lysenko@example.com", "Taras Lysenko"),
     ("viktoria_shevchenko", "viktoria.shevchenko@example.com", "Viktoria Shevchenko"),
     ("yaroslav_tkach", "yaroslav.tkach@example.com", "Yaroslav Tkach"),
+    ("ihor_pavlenko", "ihor.pavlenko@example.com", "Ihor Pavlenko"),
+    ("kateryna_rudenko", "kateryna.rudenko@example.com", "Kateryna Rudenko"),
+    ("lev_moroz", "lev.moroz@example.com", "Lev Moroz"),
+    ("marta_zinchenko", "marta.zinchenko@example.com", "Marta Zinchenko"),
+    ("nazar_bilous", "nazar.bilous@example.com", "Nazar Bilous"),
+    ("oksana_hrytsenko", "oksana.hrytsenko@example.com", "Oksana Hrytsenko"),
+    ("petro_yakovenko", "petro.yakovenko@example.com", "Petro Yakovenko"),
+    ("ruslana_chumak", "ruslana.chumak@example.com", "Ruslana Chumak"),
+    ("serhii_dovhan", "serhii.dovhan@example.com", "Serhii Dovhan"),
+    ("yuliia_litvin", "yuliia.litvin@example.com", "Yuliia Litvin"),
 ]
 
 DEMO_JUDGES = [
     ("judge_maryna", "judge.maryna@example.com", "Maryna Judge"),
     ("judge_andrii", "judge.andrii@example.com", "Andrii Reviewer"),
     ("judge_olha", "judge.olha@example.com", "Olha Expert"),
+    ("judge_natalia", "judge.natalia@example.com", "Natalia Invited"),
+    ("judge_dmytro", "judge.dmytro@example.com", "Dmytro Declined"),
 ]
 
 
@@ -189,6 +205,7 @@ class Command(BaseCommand):
         self._ensure_demo_team_result_subjects(competitions, fake_users)
         self._create_announcements_and_comments(competitions, demo_users, fake_users)
         self._create_demo_submissions_scores_and_metrics(competitions, fake_users, judge_users, demo_users["organizer"], now)
+        self._create_scenario_coverage_records(competitions, demo_users, fake_users, judge_users, now)
         self._refresh_competition_counters(competitions)
         self._create_awards_and_certificates(competitions, demo_users, fake_users)
 
@@ -670,27 +687,69 @@ class Command(BaseCommand):
                 "country": "Ukraine",
             },
         )
-        draft_competition = Competition.objects.create(
-            name="Pending Mobile Hackathon Proposal",
-            short_description="Draft creation request for administrator Pending testing",
-            cover_image="https://picsum.photos/seed/pending-mobile-hackathon/900/500",
-            banner_image="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=1600&auto=format&fit=crop",
-            status="draft",
-            event_type="online",
-            participation_type="team",
-            industry="programming",
-            difficulty="mixed",
-            language="uk",
-            is_public=False,
-            show_in_catalog=False,
-            starts_at=now + timedelta(days=7),
-            ends_at=now + timedelta(days=9),
-            timer_deadline=now + timedelta(days=7),
+        draft_competition, _ = Competition.objects.update_or_create(
+            slug=slugify("Pending Mobile Hackathon Proposal"),
+            defaults={
+                "name": "Pending Mobile Hackathon Proposal",
+                "short_description": "Draft creation request for administrator Pending testing",
+                "cover_image": "https://picsum.photos/seed/pending-mobile-hackathon/900/500",
+                "banner_image": "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=1600&auto=format&fit=crop",
+                "status": "draft",
+                "event_type": "online",
+                "participation_type": "team",
+                "industry": "programming",
+                "difficulty": "mixed",
+                "language": "uk",
+                "is_public": False,
+                "show_in_catalog": False,
+                "starts_at": now + timedelta(days=7),
+                "ends_at": now + timedelta(days=9),
+                "timer_deadline": now + timedelta(days=7),
+                "total_rounds": 1,
+                "organizer_approval_status": "pending",
+            },
         )
         CompetitionParticipant.objects.update_or_create(
             competition=draft_competition,
             user=guest_organizer,
             defaults={"display_name": "Guest Organizer", "role": "organizer", "status": "approved"},
+        )
+        CompetitionRound.objects.update_or_create(
+            competition=draft_competition,
+            sort_order=0,
+            defaults={
+                "title": "Draft qualification",
+                "description": "Draft round for administrator approval testing.",
+                "status": "draft",
+                "starts_at": draft_competition.starts_at,
+                "ends_at": draft_competition.ends_at,
+                "submission_required": True,
+                "max_attempts": 1,
+            },
+        )
+        CompetitionSubmissionSettings.objects.update_or_create(
+            competition=draft_competition,
+            defaults={
+                "submission_mode": "mixed",
+                "submission_policy": "single",
+                "allowed_file_types": ["pdf", "zip", "md", "txt"],
+                "max_file_size_mb": 25,
+                "max_submissions": 1,
+                "repository_url_required": False,
+                "demo_url_required": False,
+                "description_required": True,
+            },
+        )
+        CompetitionJudgingCriterion.objects.update_or_create(
+            competition=draft_competition,
+            title="Draft readiness",
+            defaults={
+                "description": "Administrative review criterion for pending organizer proposals.",
+                "max_score": 10,
+                "weight": 1,
+                "judging_mode": "manual",
+                "sort_order": 0,
+            },
         )
 
     def _create_rounds_and_schedule(self, competitions, now):
@@ -769,13 +828,15 @@ class Command(BaseCommand):
         comp.starts_at = start_at
         comp.ends_at = end_at
         comp.total_rounds = round_count
-        segment = (end_at - start_at) / round_count
+        gap = timedelta(seconds=1)
+        total_duration = max(end_at - start_at - (gap * max(round_count - 1, 0)), timedelta(seconds=round_count))
+        segment = total_duration / round_count
         cursor = start_at
         active_round = 0
         active_deadline = start_at
 
         for round_index in range(round_count):
-            next_cursor = cursor + segment
+            next_cursor = end_at if round_index == round_count - 1 else cursor + segment
             round_number = round_index + 1
             if cursor <= now <= next_cursor:
                 active_round = round_number
@@ -810,7 +871,7 @@ class Command(BaseCommand):
                     "stream_label": "Demo live stream" if is_stream_round else "",
                 },
             )
-            cursor = next_cursor
+            cursor = next_cursor + gap
 
         if now > end_at:
             active_round = round_count
@@ -1017,7 +1078,8 @@ class Command(BaseCommand):
         )
 
         # Pending organizer queue: visible to demo_organizer in Pending.
-        for pending_index, (pending_user, pending_name) in enumerate(fake_users[:3]):
+        pending_queue_users = fake_users[13:16] if len(fake_users) >= 16 else fake_users[:3]
+        for pending_index, (pending_user, pending_name) in enumerate(pending_queue_users):
             target_comp = competitions[2 if pending_index < 2 else 4]
             request_team, _ = CompetitionTeam.objects.get_or_create(
                 competition=target_comp,
@@ -1098,7 +1160,8 @@ class Command(BaseCommand):
             if comp.status not in result_statuses or comp.participation_type == "individual":
                 continue
             for index, team_name in enumerate(demo_team_names):
-                captain_user, captain_name = fake_users[index % len(fake_users)]
+                pool_index = min(10 + index, len(fake_users) - 1)
+                captain_user, captain_name = fake_users[pool_index]
                 team, _ = CompetitionTeam.objects.update_or_create(
                     competition=comp,
                     name=team_name,
@@ -1280,14 +1343,15 @@ class Command(BaseCommand):
                         },
                     )
                     submission_status = "locked" if (round_obj.ends_at and round_obj.ends_at < now) or comp.status in {"judging", "finished", "archived"} else "accepted"
+                    submission_title = f"{subject_name} - {round_obj.title}"
                     submission, _ = CompetitionSubmission.objects.update_or_create(
                         competition=comp,
                         round=round_obj,
                         participant=subject["participant"],
                         team=subject["team"],
+                        title=submission_title,
                         defaults={
                             "submitted_by": submitter,
-                            "title": f"{subject_name} - {round_obj.title}",
                             "description": f"Seeded demo submission for {subject_name}. Includes notes, repository and demo evidence.",
                             "repository_url": f"https://github.com/judgify-demo/{slugify(comp.name)}-{slugify(subject_name)}",
                             "demo_url": f"https://demo.judgify.local/{slugify(comp.name)}/{slugify(subject_name)}",
@@ -1413,6 +1477,204 @@ class Command(BaseCommand):
                 max_value=max_value,
                 sort_order=order,
                 mode="team" if comp.participation_type != "individual" else "individual",
+            )
+
+    def _create_scenario_coverage_records(self, competitions, demo_users, fake_users, judge_users, now):
+        if not competitions:
+            return
+
+        participant_user = demo_users["participant"]
+        viewer_user = demo_users["viewer"]
+        organizer_user = demo_users["organizer"]
+
+        for index, comp in enumerate(competitions[:10]):
+            UserCompetitionWatch.objects.update_or_create(
+                user=participant_user,
+                competition=comp,
+                defaults={
+                    "watch_live": index % 2 == 0,
+                    "watch_rounds": index % 3 != 0,
+                    "watch_updates": True,
+                },
+            )
+            UserCompetitionWatch.objects.update_or_create(
+                user=viewer_user,
+                competition=comp,
+                defaults={
+                    "watch_live": False,
+                    "watch_rounds": True,
+                    "watch_updates": index % 2 == 1,
+                },
+            )
+
+        invitation_statuses = ["queued", "sent", "accepted", "declined", "expired"]
+        for index, status_value in enumerate(invitation_statuses):
+            comp = competitions[index % len(competitions)]
+            email = f"scenario-{status_value}@example.com"
+            invitation, _ = CompetitionInvitation.objects.update_or_create(
+                competition=comp,
+                email=email,
+                target_type="team" if comp.participation_type != "individual" else "individual",
+                team_name=f"Scenario Invite Team {index + 1}" if comp.participation_type != "individual" else "",
+                defaults={
+                    "invited_by": organizer_user,
+                    "token": f"demo-{slugify(comp.slug or comp.name)}-{status_value}-{index}",
+                    "status": status_value,
+                    "message": f"Seeded {status_value} invitation for acceptance/decline flow testing.",
+                    "expires_at": now + timedelta(days=7 - index),
+                    "sent_at": now - timedelta(hours=index + 1) if status_value in {"sent", "accepted", "declined", "expired"} else None,
+                    "responded_at": now - timedelta(minutes=index + 5) if status_value in {"accepted", "declined"} else None,
+                },
+            )
+            OutboundMessage.objects.update_or_create(
+                invitation=invitation,
+                channel="email",
+                defaults={
+                    "competition": comp,
+                    "recipient_email": email,
+                    "subject": f"Demo invitation {status_value}: {comp.name}",
+                    "body": f"This seeded message covers the {status_value} outbound notification scenario.",
+                    "status": "failed" if status_value == "expired" else ("sent" if status_value in {"sent", "accepted", "declined"} else "queued"),
+                    "error_message": "Seeded delivery failure for retry UI." if status_value == "expired" else "",
+                    "queued_at": now - timedelta(hours=index + 2),
+                    "sent_at": now - timedelta(hours=index + 1) if status_value in {"sent", "accepted", "declined"} else None,
+                },
+            )
+
+        request_specs = [
+            (3, fake_users[10], "approved", "participant", None, "Previously approved individual request."),
+            (4, fake_users[11], "rejected", "participant", None, "Rejected to cover organizer denial flow."),
+            (5, fake_users[12], "withdrawn", "team_member", "Withdrawn Scenario Team", "Withdrawn by applicant before review."),
+        ]
+        for comp_index, user_pair, status_value, role, team_name, message in request_specs:
+            if comp_index >= len(competitions):
+                continue
+            comp = competitions[comp_index]
+            request_user, display_name = user_pair
+            team = None
+            if role == "team_member":
+                team, _ = CompetitionTeam.objects.update_or_create(
+                    competition=comp,
+                    name=team_name,
+                    defaults={
+                        "captain": None if status_value == "withdrawn" else request_user,
+                        "status": status_value if status_value in {"approved", "rejected"} else "pending",
+                        "description": f"Seeded {status_value} team request scenario.",
+                    },
+                )
+            CompetitionJoinRequest.objects.update_or_create(
+                competition=comp,
+                user=request_user,
+                role=role,
+                defaults={
+                    "status": status_value,
+                    "team": team,
+                    "team_name": team.name if team else "",
+                    "message": message,
+                    "reviewed_by": organizer_user if status_value in {"approved", "rejected"} else None,
+                    "reviewed_at": now - timedelta(hours=2) if status_value in {"approved", "rejected"} else None,
+                },
+            )
+            if status_value in {"approved", "rejected", "withdrawn"}:
+                CompetitionParticipant.objects.update_or_create(
+                    competition=comp,
+                    user=request_user,
+                    defaults={
+                        "display_name": display_name,
+                        "role": role,
+                        "status": status_value,
+                        "team": team,
+                        "is_active_now": False,
+                    },
+                )
+
+        for index, comp in enumerate([item for item in competitions if item.status in {"active", "judging", "finished"}][:5]):
+            first_round = comp.rounds.order_by("sort_order", "id").first()
+            subject = self._submission_subjects(comp)[:1]
+            if not first_round or not subject:
+                continue
+            submitter = self._submitter_for_subject(subject[0]) or participant_user
+            subject_name = self._subject_name(subject[0])
+            edge_status = ["created", "validated", "rejected", "accepted", "locked"][index % 5]
+            content = self._build_submission_file(comp, first_round, f"{subject_name} {edge_status}")
+            file_obj, _ = UserFile.objects.update_or_create(
+                owner=submitter,
+                storage_key=f"demo/submissions/{comp.slug or comp.id}/edge-{edge_status}.md",
+                defaults={
+                    "original_name": f"{slugify(comp.name)}-{edge_status}-edge.md",
+                    "mime_type": "text/markdown",
+                    "size_bytes": len(content),
+                    "content": content,
+                    "file_type": "submission",
+                    "visibility": "competition_only",
+                    "public_url": "",
+                },
+            )
+            CompetitionSubmission.objects.update_or_create(
+                competition=comp,
+                round=first_round,
+                participant=subject[0]["participant"],
+                team=subject[0]["team"],
+                title=f"{subject_name} - {edge_status} scenario",
+                defaults={
+                    "submitted_by": submitter,
+                    "description": f"Seeded edge-case submission with {edge_status} status.",
+                    "repository_url": f"https://github.com/judgify-demo/{slugify(comp.name)}-{edge_status}",
+                    "demo_url": f"https://demo.judgify.local/{slugify(comp.name)}/{edge_status}",
+                    "file": file_obj,
+                    "status": edge_status,
+                    "locked_at": now if edge_status == "locked" else None,
+                },
+            )
+
+        for index, comp in enumerate([item for item in competitions if item.status in {"active", "judging"}][:4]):
+            judge = judge_users[3 + (index % max(1, len(judge_users) - 3))]
+            CompetitionParticipant.objects.update_or_create(
+                competition=comp,
+                user=judge,
+                defaults={
+                    "display_name": judge.get_full_name() or judge.get_username(),
+                    "role": "judge",
+                    "status": "pending" if index % 2 == 0 else "withdrawn",
+                    "team": None,
+                    "is_active_now": False,
+                },
+            )
+            CompetitionJudgeAssignment.objects.update_or_create(
+                competition=comp,
+                round=None,
+                judge=judge,
+                assignment_type="manual",
+                defaults={
+                    "status": "invited" if index % 2 == 0 else "declined",
+                    "invited_by": organizer_user,
+                },
+            )
+
+        for index, user in enumerate([participant_user, viewer_user, *[user for user, _name in fake_users[:4]]]):
+            comp = competitions[index % len(competitions)]
+            feedback = f"Feedback note for {user.get_username()} in {comp.name}".encode("utf-8")
+            feedback_file, _ = UserFile.objects.update_or_create(
+                owner=user,
+                storage_key=f"demo/user-materials/{user.username}-{slugify(comp.name)}-feedback.txt",
+                defaults={
+                    "original_name": f"{user.username}-feedback.txt",
+                    "mime_type": "text/plain",
+                    "size_bytes": len(feedback),
+                    "content": feedback,
+                    "file_type": "resource",
+                    "visibility": "private",
+                    "public_url": "",
+                },
+            )
+            UserMaterial.objects.update_or_create(
+                user=user,
+                file=feedback_file,
+                defaults={
+                    "title": f"Feedback for {comp.name}",
+                    "material_type": "feedback",
+                    "competition": comp,
+                },
             )
 
     def _refresh_competition_counters(self, competitions):
