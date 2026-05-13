@@ -14,6 +14,21 @@ function optionLabel(t, group, value) {
   return t(`options.${group}.${value}`, { defaultValue: String(value || "").replaceAll("_", " ") });
 }
 
+function splitModeValues(value) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function judgingModeLabel(t, value) {
+  const modes = splitModeValues(value);
+  if (!modes.length) return t("competitionPage.notConfigured");
+  if (modes.length > 1) return optionLabel(t, "review_type", "mixed");
+  return optionLabel(t, "review_type", modes[0].replaceAll(" ", "_"));
+}
+
 function submissionStatusLabel(t, status) {
   if (status === "accepted") return t("judgingTab.submitted", { defaultValue: "Submitted" });
   if (status === "locked") return t("judgingTab.locked", { defaultValue: "Locked" });
@@ -605,9 +620,15 @@ export default function JudgingTab({ competition, onScoreSubmit, onSubmissionCre
       <h2 className="competition-section-title">{t("judgingTab.title")}</h2>
 
       <div className="judging-mode-line">
-        {t("judgingTab.scoringMode")} <strong>{judging.mode ? optionLabel(t, "review_type", judging.mode) : t("competitionPage.notConfigured")}</strong>
-        <span>{t("judgingTab.aggregation")} {optionLabel(t, "aggregation", reviewModes.aggregation || "average")}</span>
-        <span>{t("judgingTab.visibility")} {optionLabel(t, "visibility", reviewModes.visibility || "aggregate")}</span>
+        <span>
+          {t("judgingTab.scoringMode")} <strong>{judgingModeLabel(t, judging.mode)}</strong>
+        </span>
+        <span>
+          {t("judgingTab.aggregation")} <strong>{optionLabel(t, "aggregation", reviewModes.aggregation || "average")}</strong>
+        </span>
+        <span>
+          {t("judgingTab.visibility")} <strong>{optionLabel(t, "visibility", reviewModes.visibility || "aggregate")}</strong>
+        </span>
       </div>
 
       <SubmissionPanel competition={competition} judging={judging} onSubmissionCreate={onSubmissionCreate} />

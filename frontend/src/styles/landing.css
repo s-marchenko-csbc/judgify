@@ -1546,7 +1546,24 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   color: #4a5160;
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 16px;
+  gap: 8px;
+}
+
+.judging-mode-line > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid #dbe4f4;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.58);
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.judging-mode-line strong {
+  color: #111326;
 }
 
 .judging-metric-list {
