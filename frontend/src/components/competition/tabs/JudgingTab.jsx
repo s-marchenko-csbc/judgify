@@ -213,50 +213,63 @@ function ScoreTables({ tables = [] }) {
 
   return (
     <div className="judging-round-list">
-      {tables.map((table) => (
-        <div key={table.round?.id || table.round?.title} className="judging-round-block">
-          <div className="judging-round-heading">
-            <h3>{table.round?.title || t("judgingTab.round")}</h3>
-            <span>{optionLabel(t, "status", table.round?.status || "scheduled")}</span>
-          </div>
+      {tables.map((table) => {
+        const criteria = table.rows?.[0]?.criteria || [];
+        const criteriaCount = Math.max(criteria.length, 1);
+        const tableMinWidth = 360 + criteriaCount * 136 + 110;
 
-          <div className="judging-table-scroll">
-            <table className="judging-score-table">
-              <thead>
-                <tr>
-                  <th>{t("judgingTab.submittedWork")}</th>
-                  {(table.rows?.[0]?.criteria || []).map((criterion) => (
-                    <th key={criterion.criterion_id}>{criterion.title}</th>
+        return (
+          <div key={table.round?.id || table.round?.title} className="judging-round-block">
+            <div className="judging-round-heading">
+              <h3>{table.round?.title || t("judgingTab.round")}</h3>
+              <span>{optionLabel(t, "status", table.round?.status || "scheduled")}</span>
+            </div>
+
+            <div className="judging-table-scroll">
+              <table className="judging-score-table score-summary-table" style={{ minWidth: `${tableMinWidth}px` }}>
+                <colgroup>
+                  <col className="score-submission-col" />
+                  {criteria.map((criterion) => (
+                    <col key={criterion.criterion_id} className="score-criterion-col" />
                   ))}
-                  <th>{t("resultsTab.total")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(table.rows || []).map((row) => (
-                  <tr key={row.subject?.id}>
-                    <td>
-                      <strong>{row.subject?.title || row.subject?.name}</strong>
-                      <small>{row.subject?.name}</small>
-                    </td>
-                    {(row.criteria || []).map((criterion) => (
-                      <td key={criterion.criterion_id}>
-                        {formatScore(criterion.score)}
-                        <small> / {criterion.max_score}</small>
-                      </td>
-                    ))}
-                    <td><strong>{formatScore(row.total_score)}</strong></td>
-                  </tr>
-                ))}
-                {!table.rows?.length && (
+                  <col className="score-total-col" />
+                </colgroup>
+                <thead>
                   <tr>
-                    <td colSpan="3">{t("judgingTab.noAcceptedYet")}</td>
+                    <th>{t("judgingTab.submittedWork")}</th>
+                    {criteria.map((criterion) => (
+                      <th key={criterion.criterion_id}>{criterion.title}</th>
+                    ))}
+                    <th>{t("resultsTab.total")}</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(table.rows || []).map((row) => (
+                    <tr key={row.subject?.id}>
+                      <td>
+                        <strong>{row.subject?.title || row.subject?.name}</strong>
+                        <small>{row.subject?.name}</small>
+                      </td>
+                      {(row.criteria || []).map((criterion) => (
+                        <td key={criterion.criterion_id}>
+                          {formatScore(criterion.score)}
+                          <small> / {criterion.max_score}</small>
+                        </td>
+                      ))}
+                      <td><strong>{formatScore(row.total_score)}</strong></td>
+                    </tr>
+                  ))}
+                  {!table.rows?.length && (
+                    <tr>
+                      <td colSpan={criteria.length + 2}>{t("judgingTab.noAcceptedYet")}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

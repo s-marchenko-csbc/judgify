@@ -5147,9 +5147,43 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   table-layout: fixed;
 }
 
+.score-summary-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.score-summary-table .score-submission-col {
+  width: 360px;
+}
+
+.score-summary-table .score-criterion-col {
+  width: 136px;
+}
+
+.score-summary-table .score-total-col {
+  width: 110px;
+}
+
+.score-summary-table th,
+.score-summary-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.score-summary-table th {
+  line-height: 1.15;
+  hyphens: auto;
+}
+
 .judging-score-table th:first-child,
 .judging-score-table td:first-child {
   width: 50%;
+}
+
+.score-summary-table th:first-child,
+.score-summary-table td:first-child {
+  width: 360px;
 }
 
 .judging-score-table th:last-child,
@@ -5157,6 +5191,11 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   width: 120px;
   text-align: right;
   white-space: nowrap;
+}
+
+.score-summary-table th:last-child,
+.score-summary-table td:last-child {
+  width: 110px;
 }
 
 .judging-round-heading span {
