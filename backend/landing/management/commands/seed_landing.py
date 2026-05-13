@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 import io
 import random
 import zipfile
@@ -12,10 +13,19 @@ from landing.models import (
     Badge,
     Certificate,
     Competition,
+    CompetitionAnnouncement,
+    CompetitionAnnouncementComment,
     CompetitionJoinRequest,
+    CompetitionJudgingCriterion,
+    CompetitionJudgingMetric,
+    CompetitionJudgeAssignment,
     CompetitionMaterial,
     CompetitionParticipant,
     CompetitionRound,
+    CompetitionRoundResult,
+    CompetitionScore,
+    CompetitionSubmission,
+    CompetitionSubmissionSettings,
     CompetitionTeam,
     RecentlyViewedCompetition,
     RecentlyViewedMaterial,
@@ -146,6 +156,12 @@ FAKE_PARTICIPANTS = [
     ("yaroslav_tkach", "yaroslav.tkach@example.com", "Yaroslav Tkach"),
 ]
 
+DEMO_JUDGES = [
+    ("judge_maryna", "judge.maryna@example.com", "Maryna Judge"),
+    ("judge_andrii", "judge.andrii@example.com", "Andrii Reviewer"),
+    ("judge_olha", "judge.olha@example.com", "Olha Expert"),
+]
+
 
 class Command(BaseCommand):
     help = "Seed Judgify demo data with coherent users, teams, pending queues, awards and dynamic rounds."
@@ -155,7 +171,8 @@ class Command(BaseCommand):
 
         demo_users = self._ensure_demo_users()
         fake_users = self._ensure_fake_participants()
-        self._cleanup_generated_demo_awards(list(demo_users.values()) + [user for user, _ in fake_users])
+        judge_users = self._ensure_demo_judges()
+        self._cleanup_generated_demo_awards(list(demo_users.values()) + [user for user, _ in fake_users] + judge_users)
 
         # Dev seed intentionally resets demo competitions because their dates/rounds must be recalculated
         # after every container restart.
@@ -165,9 +182,12 @@ class Command(BaseCommand):
         self._assign_all_competitions_to_demo_organizer(competitions, demo_users["organizer"])
         self._create_admin_pending_proposal(now)
         self._create_rounds_and_schedule(competitions, now)
+        self._create_submission_settings_and_criteria(competitions)
         self._create_materials(competitions, demo_users["organizer"])
         self._create_saved_and_recent(competitions, demo_users["participant"], demo_users["viewer"])
         self._create_team_memberships_and_pending_requests(competitions, demo_users, fake_users)
+        self._create_announcements_and_comments(competitions, demo_users, fake_users)
+        self._create_demo_submissions_scores_and_metrics(competitions, fake_users, judge_users, demo_users["organizer"], now)
         self._refresh_competition_counters(competitions)
         self._create_awards_and_certificates(competitions, demo_users, fake_users)
 
@@ -223,6 +243,26 @@ class Command(BaseCommand):
             )
             fake_users.append((user, full_name))
         return fake_users
+
+    def _ensure_demo_judges(self):
+        judges = []
+        for username, email, full_name in DEMO_JUDGES:
+            first, *last = full_name.split(" ")
+            user, _ = User.objects.get_or_create(
+                username=username,
+                defaults={"email": email, "first_name": first, "last_name": " ".join(last)},
+            )
+            user.email = email
+            user.first_name = first
+            user.last_name = " ".join(last)
+            user.set_password(DEMO_PASSWORD)
+            user.save()
+            UserProfile.objects.update_or_create(
+                user=user,
+                defaults={"display_name": full_name, "primary_role": "participant", "country": "Ukraine"},
+            )
+            judges.append(user)
+        return judges
 
     def _cleanup_generated_demo_awards(self, users):
         usernames = [user.username for user in users]
@@ -657,7 +697,11 @@ class Command(BaseCommand):
         for index, comp in enumerate(competitions):
             if comp.status == "active":
                 round_count = max(comp.total_rounds, 3)
-                start_at = now - timedelta(minutes=random.randint(25, 95))
+                desired_round = min(round_count, (index % 3) + 1)
+                remaining = max(month_end - now, timedelta(days=3))
+                midpoint_ratio = (desired_round - 0.5) / round_count
+                elapsed = remaining * (midpoint_ratio / max(0.1, 1 - midpoint_ratio))
+                start_at = now - elapsed
                 end_at = month_end
                 self._apply_round_windows(comp, start_at, end_at, round_count, now, stream_enabled=index < 2)
                 comp.registration_starts_at = start_at - timedelta(days=2)
@@ -739,6 +783,14 @@ class Command(BaseCommand):
                 active_deadline = cursor
 
             is_stream_round = bool(stream_enabled and cursor <= now <= next_cursor)
+            if now > next_cursor:
+                round_status = "closed"
+            elif cursor <= now <= next_cursor:
+                round_status = "active"
+            elif cursor > now:
+                round_status = "scheduled"
+            else:
+                round_status = "draft"
             CompetitionRound.objects.update_or_create(
                 competition=comp,
                 sort_order=round_index,
@@ -747,7 +799,7 @@ class Command(BaseCommand):
                     "description": "Demo stage with sequential deadlines.",
                     "starts_at": cursor,
                     "ends_at": next_cursor,
-                    "status": "draft",
+                    "status": round_status,
                     "submission_required": True,
                     "max_attempts": round_number,
                     "is_stream_enabled": is_stream_round,
@@ -764,6 +816,59 @@ class Command(BaseCommand):
         comp.current_round = active_round
         comp.timer_deadline = active_deadline
         comp.save()
+
+    def _create_submission_settings_and_criteria(self, competitions):
+        for comp in competitions:
+            CompetitionSubmissionSettings.objects.update_or_create(
+                competition=comp,
+                defaults={
+                    "submission_mode": "mixed",
+                    "submission_policy": "latest" if comp.status in {"active", "judging"} else "single",
+                    "allowed_file_types": ["pdf", "zip", "md", "txt"],
+                    "max_file_size_mb": 50 if comp.status == "active" else 25,
+                    "max_submissions": 3 if comp.status == "active" else 1,
+                    "repository_url_required": comp.industry in {"programming", "cybersecurity"},
+                    "demo_url_required": comp.industry in {"design", "robotics"},
+                    "description_required": True,
+                },
+            )
+
+            comp.manual_judging_enabled = True
+            comp.automatic_judging_enabled = comp.industry in {"programming", "cybersecurity", "robotics"}
+            comp.peer_review_enabled = comp.status in {"active", "judging"} or comp.participation_type == "individual"
+            comp.judging_aggregation = "average" if comp.status in {"judging", "finished"} else "sum"
+            comp.judging_visibility = "open" if comp.status in {"finished", "archived"} else "aggregate"
+            comp.save(update_fields=[
+                "manual_judging_enabled",
+                "automatic_judging_enabled",
+                "peer_review_enabled",
+                "judging_aggregation",
+                "judging_visibility",
+            ])
+
+            criteria = [
+                ("Solution quality", "Completeness, reliability and fit to the round brief.", 10, 1.0, "manual"),
+                ("Innovation", "Originality and practical value of the idea.", 10, 0.8, "mixed"),
+                ("Delivery", "Clarity of materials, demo quality and implementation evidence.", 5, 0.6, "peer_review"),
+            ]
+            if comp.automatic_judging_enabled:
+                criteria.append(("Automated checks", "Seeded automatic assessment for runnable artifacts.", 10, 0.7, "automatic"))
+
+            existing_ids = []
+            for order, (title, description, max_score, weight, mode) in enumerate(criteria):
+                criterion, _ = CompetitionJudgingCriterion.objects.update_or_create(
+                    competition=comp,
+                    title=title,
+                    defaults={
+                        "description": description,
+                        "max_score": max_score,
+                        "weight": weight,
+                        "judging_mode": mode,
+                        "sort_order": order,
+                    },
+                )
+                existing_ids.append(criterion.id)
+            CompetitionJudgingCriterion.objects.filter(competition=comp).exclude(id__in=existing_ids).delete()
 
     def _create_materials(self, competitions, owner):
         for comp in competitions:
@@ -978,13 +1083,312 @@ class Command(BaseCommand):
                 if idx % 2 == 0:
                     RecentlyViewedCompetition.objects.get_or_create(user=member_user, competition=comp)
 
+    def _create_announcements_and_comments(self, competitions, demo_users, fake_users):
+        commenter_pool = [
+            demo_users["participant"],
+            demo_users["viewer"],
+            *[user for user, _display_name in fake_users[:5]],
+        ]
+        for index, comp in enumerate(competitions):
+            if comp.status == "draft":
+                continue
+            announcement_specs = [
+                (
+                    "Round schedule updated",
+                    f"{comp.name} now has fresh demo deadlines, materials and a visible judging flow.",
+                    True,
+                ),
+                (
+                    "Materials are available",
+                    "Rules and starter files are attached as real downloadable files in the Materials area.",
+                    False,
+                ),
+            ]
+            if comp.status in {"active", "judging"}:
+                announcement_specs.append((
+                    "Judging workspace is live",
+                    "Judges can review submitted works, update scores and track criteria by round.",
+                    False,
+                ))
+
+            for order, (title, text, pinned) in enumerate(announcement_specs):
+                announcement, _ = CompetitionAnnouncement.objects.update_or_create(
+                    competition=comp,
+                    title=title,
+                    defaults={
+                        "text": text,
+                        "author": demo_users["organizer"],
+                        "is_pinned": pinned,
+                    },
+                )
+                for offset, commenter in enumerate(commenter_pool[: 2 + ((index + order) % 3)]):
+                    if commenter.id == demo_users["organizer"].id:
+                        continue
+                    CompetitionAnnouncementComment.objects.get_or_create(
+                        announcement=announcement,
+                        author=commenter,
+                        text=[
+                            "Thanks, this makes the next step clear.",
+                            "Reviewed the files and the deadline looks good.",
+                            "Can confirm the submission package opens correctly.",
+                            "Looking forward to the next round.",
+                        ][(index + order + offset) % 4],
+                    )
+
+    def _submission_subjects(self, comp):
+        if comp.participation_type == "individual":
+            participants = CompetitionParticipant.objects.filter(
+                competition=comp,
+                role="participant",
+                status="approved",
+            ).select_related("user").order_by("id")
+            return [{"participant": participant, "team": None} for participant in participants[:5]]
+
+        teams = CompetitionTeam.objects.filter(
+            competition=comp,
+            status="approved",
+        ).select_related("captain").order_by("id")
+        return [{"participant": None, "team": team} for team in teams[:5]]
+
+    def _build_submission_file(self, comp, round_obj, subject_name):
+        return "\n".join([
+            f"# {comp.name} / {round_obj.title}",
+            "",
+            f"Submitted by: {subject_name}",
+            "Repository and demo links are included in the submission metadata.",
+            "This generated file gives the judging table a real downloadable artifact.",
+        ]).encode("utf-8")
+
+    def _subject_name(self, subject):
+        if subject["team"]:
+            return subject["team"].name
+        return subject["participant"].display_name
+
+    def _submitter_for_subject(self, subject):
+        if subject["team"] and subject["team"].captain_id:
+            return subject["team"].captain
+        if subject["participant"] and subject["participant"].user_id:
+            return subject["participant"].user
+        return None
+
+    def _score_value(self, comp_index, subject_index, round_index, criterion, judge_index=0):
+        base = Decimal("5.80") + Decimal((comp_index + subject_index + round_index + judge_index) % 4) * Decimal("0.62")
+        cap = Decimal(str(criterion.max_score))
+        return min(cap, base + Decimal(str(criterion.sort_order)) * Decimal("0.35")).quantize(Decimal("0.01"))
+
+    def _create_demo_submissions_scores_and_metrics(self, competitions, fake_users, judge_users, owner, now):
+        lively_statuses = {"active", "judging", "finished", "archived"}
+        for comp_index, comp in enumerate(competitions):
+            if comp.status not in lively_statuses:
+                continue
+
+            rounds = list(comp.rounds.order_by("sort_order", "id"))
+            if not rounds:
+                continue
+
+            if comp.status == "active":
+                scoreable_rounds = [
+                    round_obj for round_obj in rounds
+                    if round_obj.starts_at and round_obj.starts_at <= now
+                ][: max(1, comp.current_round)]
+            elif comp.status == "archived":
+                scoreable_rounds = rounds[:2]
+            else:
+                scoreable_rounds = rounds[: min(3, len(rounds))]
+
+            subjects = self._submission_subjects(comp)
+            if not subjects:
+                continue
+
+            active_judges = judge_users[: 2 + (comp_index % 2)]
+            for judge in active_judges:
+                CompetitionParticipant.objects.update_or_create(
+                    competition=comp,
+                    user=judge,
+                    defaults={
+                        "display_name": judge.get_full_name() or judge.get_username(),
+                        "role": "judge",
+                        "status": "approved",
+                        "team": None,
+                        "is_active_now": comp.status == "judging",
+                    },
+                )
+                for round_obj in scoreable_rounds:
+                    CompetitionJudgeAssignment.objects.update_or_create(
+                        competition=comp,
+                        round=round_obj,
+                        judge=judge,
+                        assignment_type="manual",
+                        defaults={"status": "completed" if comp.status in {"finished", "archived"} else "accepted", "invited_by": owner},
+                    )
+
+            submissions = []
+            for round_index, round_obj in enumerate(scoreable_rounds):
+                for subject_index, subject in enumerate(subjects):
+                    subject_name = self._subject_name(subject)
+                    submitter = self._submitter_for_subject(subject) or owner
+                    submission_content = self._build_submission_file(comp, round_obj, subject_name)
+                    file_key = f"demo/submissions/{comp.slug or comp.id}/round-{round_obj.sort_order + 1}/{slugify(subject_name)}.md"
+                    submission_file, _ = UserFile.objects.update_or_create(
+                        owner=submitter,
+                        storage_key=file_key,
+                        defaults={
+                            "original_name": f"{slugify(subject_name)}-round-{round_obj.sort_order + 1}.md",
+                            "mime_type": "text/markdown",
+                            "size_bytes": len(submission_content),
+                            "content": submission_content,
+                            "file_type": "submission",
+                            "visibility": "competition_only",
+                            "public_url": "",
+                        },
+                    )
+                    submission_status = "locked" if (round_obj.ends_at and round_obj.ends_at < now) or comp.status in {"judging", "finished", "archived"} else "accepted"
+                    submission, _ = CompetitionSubmission.objects.update_or_create(
+                        competition=comp,
+                        round=round_obj,
+                        participant=subject["participant"],
+                        team=subject["team"],
+                        defaults={
+                            "submitted_by": submitter,
+                            "title": f"{subject_name} - {round_obj.title}",
+                            "description": f"Seeded demo submission for {subject_name}. Includes notes, repository and demo evidence.",
+                            "repository_url": f"https://github.com/judgify-demo/{slugify(comp.name)}-{slugify(subject_name)}",
+                            "demo_url": f"https://demo.judgify.local/{slugify(comp.name)}/{slugify(subject_name)}",
+                            "file": submission_file,
+                            "status": submission_status,
+                            "locked_at": now if submission_status == "locked" else None,
+                        },
+                    )
+                    submissions.append((submission, subject_index, round_index))
+
+            criteria = list(comp.judging_criteria.order_by("sort_order", "id"))
+            peer_reviewers = [
+                user for user, _display_name in fake_users
+                if CompetitionParticipant.objects.filter(
+                    competition=comp,
+                    user=user,
+                    status="approved",
+                    role__in=["participant", "team_member"],
+                ).exists()
+            ]
+
+            for submission, subject_index, round_index in submissions:
+                if comp.status == "active" and round_index == len(scoreable_rounds) - 1 and subject_index > 2:
+                    continue
+                for criterion in criteria:
+                    if criterion.judging_mode in {"manual", "mixed"}:
+                        for judge_index, judge in enumerate(active_judges[:2]):
+                            CompetitionScore.objects.update_or_create(
+                                competition=comp,
+                                round=submission.round,
+                                criterion=criterion,
+                                judge=judge,
+                                review_type="manual",
+                                submission=submission,
+                                defaults={
+                                    "subject_participant": submission.participant,
+                                    "subject_team": submission.team,
+                                    "score": self._score_value(comp_index, subject_index, round_index, criterion, judge_index),
+                                    "comment": f"Manual review: {criterion.title.lower()} is progressing well.",
+                                    "is_final": comp.status in {"judging", "finished", "archived"},
+                                },
+                            )
+                    if criterion.judging_mode in {"automatic", "mixed"} and comp.automatic_judging_enabled:
+                        CompetitionScore.objects.update_or_create(
+                            competition=comp,
+                            round=submission.round,
+                            criterion=criterion,
+                            judge=None,
+                            review_type="automatic",
+                            submission=submission,
+                            defaults={
+                                "subject_participant": submission.participant,
+                                "subject_team": submission.team,
+                                "score": self._score_value(comp_index, subject_index, round_index, criterion, 3),
+                                "comment": "Automatic checks completed from seeded artifact metadata.",
+                                "is_final": True,
+                            },
+                        )
+                    if criterion.judging_mode in {"peer_review", "mixed"} and comp.peer_review_enabled and peer_reviewers:
+                        peer = peer_reviewers[(subject_index + round_index + 1) % len(peer_reviewers)]
+                        if peer.id == getattr(submission.submitted_by, "id", None) and len(peer_reviewers) > 1:
+                            peer = peer_reviewers[(subject_index + round_index + 2) % len(peer_reviewers)]
+                        CompetitionScore.objects.update_or_create(
+                            competition=comp,
+                            round=submission.round,
+                            criterion=criterion,
+                            judge=peer,
+                            review_type="peer_review",
+                            submission=submission,
+                            defaults={
+                                "subject_participant": submission.participant,
+                                "subject_team": submission.team,
+                                "score": self._score_value(comp_index, subject_index, round_index, criterion, 5),
+                                "comment": "Peer review note from a registered participant.",
+                                "is_final": comp.status in {"judging", "finished", "archived"},
+                            },
+                        )
+
+            self._refresh_demo_results(comp)
+
+    def _refresh_demo_results(self, comp):
+        CompetitionRoundResult.objects.filter(competition=comp).delete()
+        CompetitionJudgingMetric.objects.filter(competition=comp).delete()
+        rounds = list(comp.rounds.order_by("sort_order", "id"))
+        for round_obj in rounds:
+            scores = CompetitionScore.objects.filter(competition=comp, round=round_obj).select_related("submission")
+            grouped = {}
+            for score in scores:
+                if not score.submission_id:
+                    continue
+                bucket = grouped.setdefault(score.submission_id, {"score": Decimal("0"), "count": 0, "name": score.submission.title})
+                bucket["score"] += Decimal(score.score)
+                bucket["count"] += 1
+            if not grouped:
+                continue
+            winner = max(
+                grouped.values(),
+                key=lambda item: (item["score"] / max(item["count"], 1), item["name"]),
+            )
+            average = winner["score"] / max(winner["count"], 1)
+            CompetitionRoundResult.objects.create(
+                competition=comp,
+                round_number=round_obj.sort_order + 1,
+                leader_name=winner["name"],
+                top_score=float(average),
+                summary=f"Seeded live result based on {sum(item['count'] for item in grouped.values())} score entries.",
+            )
+
+        total_submissions = CompetitionSubmission.objects.filter(competition=comp).count()
+        total_scores = CompetitionScore.objects.filter(competition=comp).count()
+        avg_score = CompetitionScore.objects.filter(competition=comp)
+        values = [Decimal(item.score) for item in avg_score]
+        metrics = [
+            ("Submitted works", float(total_submissions), None),
+            ("Score entries", float(total_scores), None),
+            ("Average score", float(sum(values, Decimal("0")) / max(len(values), 1)) if values else 0, 10),
+        ]
+        for order, (label, value, max_value) in enumerate(metrics):
+            CompetitionJudgingMetric.objects.create(
+                competition=comp,
+                label=label,
+                value=value,
+                max_value=max_value,
+                sort_order=order,
+                mode="team" if comp.participation_type != "individual" else "individual",
+            )
+
     def _refresh_competition_counters(self, competitions):
         for comp in competitions:
+            actual_comments = CompetitionAnnouncementComment.objects.filter(
+                announcement__competition=comp,
+            ).count()
             comp.participants_count = CompetitionParticipant.objects.filter(
                 competition=comp,
                 status="approved",
                 role__in=["participant", "team_member"],
             ).count()
+            comp.comments_count = max(comp.comments_count, actual_comments)
             comp.views_count = max(comp.views_count, comp.participants_count * 30 + comp.followers_count)
             comp.trending_score = (
                 comp.participants_count * 3
@@ -992,7 +1396,7 @@ class Command(BaseCommand):
                 + comp.followers_count * 2
                 + comp.comments_count * 0.5
             )
-            comp.save(update_fields=["participants_count", "views_count", "trending_score"])
+            comp.save(update_fields=["participants_count", "comments_count", "views_count", "trending_score"])
 
     def _create_awards_and_certificates(self, competitions, demo_users, fake_users):
         now = timezone.now()

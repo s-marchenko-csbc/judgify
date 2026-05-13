@@ -546,6 +546,13 @@ class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
             return False
         if user.is_staff or user.is_superuser:
             return True
+        if CompetitionParticipant.objects.filter(
+            competition=obj.competition,
+            user=user,
+            role="organizer",
+            status="approved",
+        ).exists():
+            return True
         return bool(obj.author_id and obj.author_id == user.id)
 
     def get_can_comment(self, obj):

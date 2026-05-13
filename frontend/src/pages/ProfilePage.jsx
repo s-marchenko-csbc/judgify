@@ -138,6 +138,31 @@ function DraftsPanel({ items = [], t }) {
   );
 }
 
+function MyCommentsPanel({ items = [], t }) {
+  const navigate = useNavigate();
+  if (!items.length) return null;
+
+  return (
+    <section className="profile-panel profile-comments-panel">
+      <h2>{t("profile.myComments", { defaultValue: "My comments" })}</h2>
+      <div className="profile-comment-list">
+        {items.map((item) => (
+          <button
+            type="button"
+            className="profile-comment-card"
+            key={item.id}
+            onClick={() => navigate(`/competitions/${item.competition_id}`)}
+          >
+            <strong>{item.competition_name}</strong>
+            <span>{item.announcement_title}</span>
+            <p>{item.text}</p>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function TeamAccessPanel({ teams = [], currentUserId, onManageTeam, onInviteTeamMember, t }) {
   const [inviteDrafts, setInviteDrafts] = useState({});
   const [savingInviteId, setSavingInviteId] = useState(null);
@@ -433,6 +458,7 @@ export default function ProfilePage() {
   const [teams, setTeams] = useState([]);
   const [judgeWork, setJudgeWork] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [myComments, setMyComments] = useState([]);
 
   const role = normalizeRole(user?.primaryRole);
 
@@ -454,6 +480,7 @@ export default function ProfilePage() {
     setProfileMaterials(dashboard?.materials || []);
     setJudgeWork(dashboard?.judge_work || []);
     setNotifications(dashboard?.notifications || []);
+    setMyComments(dashboard?.my_comments || []);
   };
 
   useEffect(() => {
@@ -472,6 +499,7 @@ export default function ProfilePage() {
       setProfileMaterials([]);
       setJudgeWork([]);
       setNotifications([]);
+      setMyComments([]);
       return;
     }
     let cancelled = false;
@@ -481,6 +509,7 @@ export default function ProfilePage() {
     setRecentlyViewed([]);
     setActiveCompetitions([]);
     setArchivedCompetitions([]);
+    setMyComments([]);
     fetchProfileDashboard().then((dashboard) => {
       if (cancelled || requestAuthKey !== authSessionKey) return;
       const ids = new Set((dashboard?.saved_competitions || []).map((item) => item.id));
@@ -498,6 +527,7 @@ export default function ProfilePage() {
       setProfileMaterials(dashboard?.materials || []);
       setJudgeWork(dashboard?.judge_work || []);
       setNotifications(dashboard?.notifications || []);
+      setMyComments(dashboard?.my_comments || []);
     }).catch(console.error);
     return () => { cancelled = true; };
   }, [authSessionKey, isAuthenticated]);
@@ -594,6 +624,7 @@ export default function ProfilePage() {
             {(role === "organizer" || role === "admin") && activeTab === "overview" && (
               <>
                 <StatsBlock role={role} statsData={profileStats} t={t} />
+                {role === "organizer" && <CompetitionSection title={t("profile.organizedCompetitions")} items={draftCompetitions} savedIds={savedIds} onSavedChange={handleSavedChange} emptyText={t("profile.noOrganized")} t={t} />}
                 <JudgeWorkPanel items={judgeWork} t={t} />
                 <TeamAccessPanel teams={teams} currentUserId={user?.id} onManageTeam={handleManageTeam} onInviteTeamMember={handleInviteTeamMember} t={t} />
                 {role !== "admin" && <BadgesCertificatesPanel badges={profileBadges} certificates={profileCertificates} stats={profileStats} t={t} />}
@@ -616,6 +647,7 @@ export default function ProfilePage() {
               <div className="last-competitions-list">{recentlyViewed.slice(0, role === "viewer" ? 6 : 4).map((item) => <LastCompetitionBanner key={item.id} item={item} t={t} />)}</div>
             </section>
             <NotificationsPanel items={notifications} t={t} />
+            <MyCommentsPanel items={myComments} t={t} />
             {role !== "viewer" && activeTab !== "overview" && <StatsBlock role={role} statsData={profileStats} onNavigate={setActiveTab} t={t} />}
             {role === "participant" && profileMaterials.length > 0 && (
               <section className="profile-panel"><h2>{t("profile.personalMaterials")}</h2><div className="profile-resource-list">{profileMaterials.map((item) => {

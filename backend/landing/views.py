@@ -2692,10 +2692,12 @@ class ProfileDashboardView(APIView):
         archived = approved_competitions.filter(status__in=["finished", "archived"]).order_by("-ends_at", "-updated_at")[:12]
 
         teams = CompetitionTeam.objects.filter(members__user=user).prefetch_related("members__user", "members__user__profile").select_related("competition", "captain").distinct()[:12]
-        drafts = Competition.objects.filter(
+        organized = Competition.objects.filter(
             participant_entries__user=user,
             participant_entries__role="organizer",
+            participant_entries__status="approved",
         ).distinct().order_by("-updated_at")[:12]
+        drafts = organized
 
         pending_requests = []
         if role == "organizer":
@@ -2826,6 +2828,22 @@ class ProfileDashboardView(APIView):
             })
         notifications = sorted(notifications, key=lambda item: item["created_at"] or timezone.now(), reverse=True)[:10]
 
+        own_comments = [
+            {
+                "id": comment.id,
+                "text": comment.text,
+                "created_at": comment.created_at,
+                "announcement_id": comment.announcement_id,
+                "announcement_title": comment.announcement.title,
+                "competition_id": comment.announcement.competition_id,
+                "competition_name": comment.announcement.competition.name,
+            }
+            for comment in CompetitionAnnouncementComment.objects.filter(
+                author=user,
+                announcement__competition__is_public=True,
+            ).select_related("announcement", "announcement__competition").order_by("-created_at")[:12]
+        ]
+
         return Response({
             "user": serialize_user(user),
             "profile": UserProfileSerializer(profile).data,
@@ -2839,6 +2857,7 @@ class ProfileDashboardView(APIView):
                 many=True,
                 context={"request": request},
             ).data,
+            "organized_competitions": CompetitionCardSerializer(organized, many=True, context={"request": request}).data,
             "draft_competitions": CompetitionCardSerializer(drafts, many=True, context={"request": request}).data,
             "teams": CompetitionTeamSerializer(teams, many=True).data,
             "badges": UserBadgeSerializer(UserBadge.objects.filter(user=user)[:12], many=True).data,
@@ -2854,9 +2873,11 @@ class ProfileDashboardView(APIView):
             ).data,
             "judge_work": judge_work,
             "notifications": notifications,
+            "my_comments": own_comments,
             "stats": {
                 "active": active.count(),
                 "pending": len(pending_requests),
+                "organized": CompetitionParticipant.objects.filter(user=user, role="organizer", status="approved").count(),
                 "saved": UserSavedCompetition.objects.filter(user=user, competition__is_public=True).count(),
                 "archived": archived.count(),
                 "badges": UserBadge.objects.filter(user=user).count(),

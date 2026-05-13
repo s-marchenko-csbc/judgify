@@ -4479,6 +4479,46 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   opacity: 0.6;
 }
 
+.profile-comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-comment-card {
+  width: 100%;
+  border: 1px solid rgba(99, 142, 203, 0.2);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(213, 222, 239, 0.5);
+  color: #21365c;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-comment-card strong,
+.profile-comment-card span {
+  display: block;
+}
+
+.profile-comment-card strong {
+  font-size: 0.95rem;
+  color: #1f3356;
+}
+
+.profile-comment-card span {
+  margin-top: 3px;
+  color: #638ecb;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.profile-comment-card p {
+  margin: 8px 0 0;
+  color: #52627d;
+  line-height: 1.35;
+}
+
 
 /* v28.5 profile navigation, unified side cards and account avatar fit */
 .profile-logo-link {
