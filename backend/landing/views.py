@@ -1902,6 +1902,7 @@ class CompetitionParticipantsView(APIView):
 
         participants = CompetitionParticipant.objects.filter(
             competition=competition,
+            status="approved",
             role__in=["participant", "team_member"],
         ).select_related("user", "team").order_by("display_name")
 
