@@ -1323,7 +1323,7 @@ class LandingCompetitionsView(APIView):
         "id", "slug", "name", "short_description", "cover_image", "status",
         "event_type", "participation_type", "access_mode", "visibility_mode",
         "show_in_catalog", "allow_sharing_link", "allow_external_registration",
-        "min_team_size", "max_team_size", "manual_judging_enabled",
+        "auto_approve_join_requests", "min_team_size", "max_team_size", "manual_judging_enabled",
         "automatic_judging_enabled", "peer_review_enabled", "judging_aggregation",
         "judging_visibility", "results_frozen", "industry", "difficulty",
         "language", "current_round", "total_rounds", "participants_count",
@@ -1883,9 +1883,9 @@ class JoinCompetitionView(APIView):
         display_name = full_name or getattr(request.user, "username", "") or getattr(request.user, "email", "")
         message = (request.data.get("message") or "").strip()
 
-        # All participant registrations are reviewable. Even open competitions keep
-        # a pending request so the organizer can approve/reject it manually.
-        initial_status = "pending"
+        initial_status = "approved" if competition.auto_approve_join_requests else "pending"
+        reviewed_by = None
+        reviewed_at = timezone.now() if initial_status == "approved" else None
 
         join_request, _ = CompetitionJoinRequest.objects.update_or_create(
             competition=competition,
@@ -1896,6 +1896,8 @@ class JoinCompetitionView(APIView):
                 "team": team,
                 "team_name": team.name if team else "",
                 "message": message,
+                "reviewed_by": reviewed_by,
+                "reviewed_at": reviewed_at,
             },
         )
 
@@ -1912,7 +1914,7 @@ class JoinCompetitionView(APIView):
         )
 
         if team:
-            team.status = "pending"
+            team.status = initial_status
             team.save(update_fields=["status", "updated_at"])
 
         competition.participants_count = CompetitionParticipant.objects.filter(
@@ -2692,12 +2694,18 @@ class ProfileDashboardView(APIView):
         archived = approved_competitions.filter(status__in=["finished", "archived"]).order_by("-ends_at", "-updated_at")[:12]
 
         teams = CompetitionTeam.objects.filter(members__user=user).prefetch_related("members__user", "members__user__profile").select_related("competition", "captain").distinct()[:12]
-        organized = Competition.objects.filter(
+        organizer_base = Competition.objects.filter(
             participant_entries__user=user,
             participant_entries__role="organizer",
             participant_entries__status="approved",
-        ).distinct().order_by("-updated_at")[:12]
-        drafts = organized
+        ).distinct()
+        working_statuses = ["published", "upcoming", "registration_open", "active", "judging"]
+        organized = organizer_base.filter(
+            status__in=working_statuses,
+        ).exclude(
+            organizer_approval_status="rejected",
+        ).order_by("timer_deadline", "-updated_at")[:12]
+        drafts = organizer_base.filter(status="draft").order_by("-updated_at")[:12]
 
         pending_requests = []
         if role == "organizer":
@@ -2877,7 +2885,7 @@ class ProfileDashboardView(APIView):
             "stats": {
                 "active": active.count(),
                 "pending": len(pending_requests),
-                "organized": CompetitionParticipant.objects.filter(user=user, role="organizer", status="approved").count(),
+                "organized": organizer_base.filter(status__in=working_statuses).exclude(organizer_approval_status="rejected").count(),
                 "saved": UserSavedCompetition.objects.filter(user=user, competition__is_public=True).count(),
                 "archived": archived.count(),
                 "badges": UserBadge.objects.filter(user=user).count(),

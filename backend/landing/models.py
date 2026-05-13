@@ -120,6 +120,7 @@ class Competition(models.Model):
     show_in_catalog = models.BooleanField(default=True)
     allow_sharing_link = models.BooleanField(default=True)
     allow_external_registration = models.BooleanField(default=True)
+    auto_approve_join_requests = models.BooleanField(default=False)
 
     min_team_size = models.PositiveIntegerField(default=1)
     max_team_size = models.PositiveIntegerField(default=4)

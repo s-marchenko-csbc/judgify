@@ -627,6 +627,7 @@ class Command(BaseCommand):
                 "is_public": True,
                 "show_in_catalog": True,
                 "organizer_approval_status": "approved",
+                "auto_approve_join_requests": item.get("access_mode") == "open",
                 **item,
             }
             if upsert:

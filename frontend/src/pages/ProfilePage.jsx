@@ -115,10 +115,10 @@ function CreateCompetitionPanel({ t }) {
   );
 }
 
-function DraftsPanel({ items = [], t }) {
+function DraftsPanel({ items = [], t, title }) {
   return (
     <section className="profile-panel">
-      <h2>{t("profile.organizedCompetitions")}</h2>
+      <h2>{title || t("profile.myDrafts", { defaultValue: "My drafts" })}</h2>
       {items.length === 0 ? <div className="profile-empty-state">{t("profile.noOrganized")}</div> : (
         <div className="profile-draft-list">
           {items.map((draft) => (
@@ -441,7 +441,7 @@ function ProfileEditForm({ user, onSave, t }) {
 export default function ProfilePage() {
   const navigate = useNavigate();
   const { user, loading, isAuthenticated, authSessionKey, updateProfile } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [activeTab, setActiveTab] = useState("overview");
   const [editing, setEditing] = useState(false);
   const [recentlyViewed, setRecentlyViewed] = useState([]);
@@ -453,6 +453,7 @@ export default function ProfilePage() {
   const [profileMaterials, setProfileMaterials] = useState([]);
   const [draftCompetitions, setDraftCompetitions] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
+  const [organizedCompetitions, setOrganizedCompetitions] = useState([]);
   const [activeCompetitions, setActiveCompetitions] = useState([]);
   const [archivedCompetitions, setArchivedCompetitions] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -461,6 +462,7 @@ export default function ProfilePage() {
   const [myComments, setMyComments] = useState([]);
 
   const role = normalizeRole(user?.primaryRole);
+  const myDraftsLabel = language === "uk" ? "Мої чернетки" : t("profile.myDrafts", { defaultValue: "My drafts" });
 
   const loadDashboard = async () => {
     const dashboard = await fetchProfileDashboard();
@@ -470,6 +472,7 @@ export default function ProfilePage() {
     setSavedCompetitions(mergeSavedState(saved, ids));
     setRecentlyViewed(mergeSavedState(dashboard?.recently_viewed || [], ids));
     setDraftCompetitions(dashboard?.draft_competitions || []);
+    setOrganizedCompetitions(mergeSavedState(dashboard?.organized_competitions || [], ids));
     setPendingRequests(dashboard?.pending_requests || []);
     setActiveCompetitions(mergeSavedState(dashboard?.active_competitions || [], ids));
     setArchivedCompetitions(mergeSavedState(dashboard?.archived_competitions || [], ids));
@@ -490,6 +493,7 @@ export default function ProfilePage() {
       setRecentlyViewed([]);
       setDraftCompetitions([]);
       setPendingRequests([]);
+      setOrganizedCompetitions([]);
       setActiveCompetitions([]);
       setArchivedCompetitions([]);
       setTeams([]);
@@ -509,6 +513,7 @@ export default function ProfilePage() {
     setRecentlyViewed([]);
     setActiveCompetitions([]);
     setArchivedCompetitions([]);
+    setOrganizedCompetitions([]);
     setMyComments([]);
     fetchProfileDashboard().then((dashboard) => {
       if (cancelled || requestAuthKey !== authSessionKey) return;
@@ -517,6 +522,7 @@ export default function ProfilePage() {
       setSavedCompetitions(mergeSavedState(dashboard?.saved_competitions || [], ids));
       setRecentlyViewed(mergeSavedState(dashboard?.recently_viewed || [], ids));
       setDraftCompetitions(dashboard?.draft_competitions || []);
+      setOrganizedCompetitions(mergeSavedState(dashboard?.organized_competitions || [], ids));
       setPendingRequests(dashboard?.pending_requests || []);
       setActiveCompetitions(mergeSavedState(dashboard?.active_competitions || [], ids));
       setArchivedCompetitions(mergeSavedState(dashboard?.archived_competitions || [], ids));
@@ -536,6 +542,7 @@ export default function ProfilePage() {
     setSavedIds((prev) => { const next = new Set(prev); if (nextSaved) next.add(competitionId); else next.delete(competitionId); return next; });
     const patch = (items) => items.map((competition) => competition.id === competitionId ? { ...competition, is_saved: nextSaved } : competition);
     setRecentlyViewed(patch);
+    setOrganizedCompetitions(patch);
     setSavedCompetitions((prev) => {
       if (nextSaved) {
         const knownCompetition = sourceItem || [...prev, ...recentlyViewed, ...activeCompetitions, ...archivedCompetitions].find((competition) => competition.id === competitionId);
@@ -574,7 +581,7 @@ export default function ProfilePage() {
     { id: "overview", label: t("profile.overview") },
     ...(role !== "viewer" ? [{ id: "pending", label: t("profile.pending") }] : []),
     { id: "archived", label: t("profile.archivedTab") },
-    ...(role === "organizer" ? [{ id: "drafts", label: t("profile.myCompetitions") }] : []),
+    ...(role === "organizer" ? [{ id: "drafts", label: myDraftsLabel }] : []),
   ];
 
   if (loading) return <div className="profile-dashboard-page"><main className="profile-dashboard-shell"><div className="profile-loading-panel">{t("profile.loading")}</div></main></div>;
@@ -607,7 +614,7 @@ export default function ProfilePage() {
             {editing && <ProfileEditForm user={user} t={t} onSave={async (patch) => { try { const result = await updateProfileDashboard(patch); updateProfile(result?.user || patch); } catch (error) { console.error(error); updateProfile(patch); } setEditing(false); }} />}
 
             {role === "organizer" && activeTab === "overview" && <CreateCompetitionPanel t={t} />}
-            {role === "organizer" && activeTab === "drafts" && <DraftsPanel items={draftCompetitions} t={t} />}
+            {role === "organizer" && activeTab === "drafts" && <DraftsPanel items={draftCompetitions} t={t} title={myDraftsLabel} />}
             {activeTab === "pending" && <PendingRequestsPanel role={role} requests={pendingRequests} onReview={handleReview} t={t} />}
 
             {role === "participant" && activeTab === "overview" && (
@@ -624,7 +631,7 @@ export default function ProfilePage() {
             {(role === "organizer" || role === "admin") && activeTab === "overview" && (
               <>
                 <StatsBlock role={role} statsData={profileStats} t={t} />
-                {role === "organizer" && <CompetitionSection title={t("profile.organizedCompetitions")} items={draftCompetitions} savedIds={savedIds} onSavedChange={handleSavedChange} emptyText={t("profile.noOrganized")} t={t} />}
+                {role === "organizer" && <CompetitionSection title={t("profile.organizedCompetitions")} items={organizedCompetitions} savedIds={savedIds} onSavedChange={handleSavedChange} emptyText={t("profile.noOrganized")} t={t} />}
                 <JudgeWorkPanel items={judgeWork} t={t} />
                 <TeamAccessPanel teams={teams} currentUserId={user?.id} onManageTeam={handleManageTeam} onInviteTeamMember={handleInviteTeamMember} t={t} />
                 {role !== "admin" && <BadgesCertificatesPanel badges={profileBadges} certificates={profileCertificates} stats={profileStats} t={t} />}

@@ -38,6 +38,7 @@ const defaultDraft = {
   show_in_catalog: true,
   allow_sharing_link: true,
   allow_external_registration: true,
+  auto_approve_join_requests: false,
   registration_open: true,
   submissions_open: false,
   min_team_size: 1,
@@ -309,7 +310,7 @@ export default function CompetitionBuilderPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { isAuthenticated, loading, user } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const steps = [
     { id: 1, title: t("builder.steps.basics"), hint: t("builder.steps.basicsHint") },
     { id: 2, title: t("builder.steps.format"), hint: t("builder.steps.formatHint") },
@@ -343,6 +344,10 @@ export default function CompetitionBuilderPage() {
   const [materialType, setMaterialType] = useState("guide");
   const [saving, setSaving] = useState(false);
   const draftCreationStartedRef = useRef(false);
+  const autoApproveLabel = language === "uk" ? "Автоприйом заявок" : t("builder.autoApproveJoinRequests", { defaultValue: "Auto-approve join requests" });
+  const autoApproveNote = language === "uk"
+    ? "Нові заявки на це змагання одразу отримують статус схвалено."
+    : t("builder.autoApproveJoinRequestsNote", { defaultValue: "New applications for this competition become approved immediately." });
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -660,6 +665,7 @@ export default function CompetitionBuilderPage() {
                   <CheckField label={t("builder.showCatalog")} checked={draft.show_in_catalog} onChange={(value) => setField("show_in_catalog", value)} />
                   <CheckField label={t("builder.allowSharing")} checked={draft.allow_sharing_link} onChange={(value) => setField("allow_sharing_link", value)} />
                   <CheckField label={t("builder.externalRegistration")} checked={draft.allow_external_registration} onChange={(value) => setField("allow_external_registration", value)} />
+                  <CheckField label={autoApproveLabel} checked={draft.auto_approve_join_requests} onChange={(value) => setField("auto_approve_join_requests", value)} note={autoApproveNote} />
                   {draft.participation_type !== "individual" && (
                     <>
                       <Field label={t("builder.minTeam")}><input type="number" min="1" value={draft.min_team_size} onChange={(e) => setField("min_team_size", Number(e.target.value))} /></Field>
