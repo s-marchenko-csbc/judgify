@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import CompetitionCard from "../components/CompetitionCard";
-import { fetchProfileDashboard, reviewCompetitionCreation, reviewJoinRequest, updateProfileDashboard, updateTeamManagement } from "../api/profileApi";
+import { fetchProfileDashboard, inviteTeamMember, reviewCompetitionCreation, reviewJoinRequest, updateProfileDashboard, updateTeamManagement } from "../api/profileApi";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 import AccountSwitcher from "../components/AccountSwitcher";
@@ -138,8 +138,27 @@ function DraftsPanel({ items = [], t }) {
   );
 }
 
-function TeamAccessPanel({ teams = [], currentUserId, onManageTeam, t }) {
+function TeamAccessPanel({ teams = [], currentUserId, onManageTeam, onInviteTeamMember, t }) {
+  const [inviteDrafts, setInviteDrafts] = useState({});
+  const [savingInviteId, setSavingInviteId] = useState(null);
+  const [inviteMessage, setInviteMessage] = useState("");
   if (!teams.length) return null;
+  const setInviteField = (teamId, value) => setInviteDrafts((prev) => ({ ...prev, [teamId]: value }));
+  const inviteMember = async (teamId) => {
+    const email = String(inviteDrafts[teamId] || "").trim();
+    if (!email || !onInviteTeamMember) return;
+    setSavingInviteId(teamId);
+    setInviteMessage("");
+    try {
+      await onInviteTeamMember(teamId, { email });
+      setInviteField(teamId, "");
+      setInviteMessage(t("profile.inviteQueued", { defaultValue: "Invitation queued." }));
+    } catch (error) {
+      setInviteMessage(error?.message || t("profile.inviteFailed", { defaultValue: "Could not queue invitation." }));
+    } finally {
+      setSavingInviteId(null);
+    }
+  };
   return (
     <section className="profile-panel profile-team-panel">
       <h2>{t("profile.myTeams")}</h2>
@@ -174,10 +193,24 @@ function TeamAccessPanel({ teams = [], currentUserId, onManageTeam, t }) {
                 })}
               </div>
               {isCaptain && <p className="profile-team-note">{t("profile.captainNote")}</p>}
+              {isCaptain && (
+                <div className="profile-team-invite">
+                  <input
+                    type="email"
+                    value={inviteDrafts[team.id] || ""}
+                    onChange={(event) => setInviteField(team.id, event.target.value)}
+                    placeholder={t("profile.inviteEmail", { defaultValue: "Member email" })}
+                  />
+                  <button type="button" onClick={() => inviteMember(team.id)} disabled={savingInviteId === team.id || !String(inviteDrafts[team.id] || "").trim()}>
+                    {t("profile.inviteMember", { defaultValue: "Invite" })}
+                  </button>
+                </div>
+              )}
             </article>
           );
         })}
       </div>
+      {inviteMessage && <div className="profile-team-note">{inviteMessage}</div>}
     </section>
   );
 }
@@ -502,6 +535,11 @@ export default function ProfilePage() {
     await loadDashboard();
   };
 
+  const handleInviteTeamMember = async (teamId, payload) => {
+    await inviteTeamMember(teamId, payload);
+    await loadDashboard();
+  };
+
   const tabs = [
     { id: "overview", label: t("profile.overview") },
     ...(role !== "viewer" ? [{ id: "pending", label: t("profile.pending") }] : []),
@@ -548,7 +586,7 @@ export default function ProfilePage() {
                 <CompetitionSection title={t("profile.registeredCompetitions")} items={activeCompetitions} savedIds={savedIds} onSavedChange={handleSavedChange} emptyText={t("profile.noRegistered")} t={t} />
                 <CompetitionSection title={t("profile.archivedCompetitions")} items={archivedCompetitions} savedIds={savedIds} onSavedChange={handleSavedChange} emptyText={t("profile.noArchived")} t={t} />
                 <JudgeWorkPanel items={judgeWork} t={t} />
-                <TeamAccessPanel teams={teams} currentUserId={user?.id} onManageTeam={handleManageTeam} t={t} />
+                <TeamAccessPanel teams={teams} currentUserId={user?.id} onManageTeam={handleManageTeam} onInviteTeamMember={handleInviteTeamMember} t={t} />
                 <BadgesCertificatesPanel badges={profileBadges} certificates={profileCertificates} stats={profileStats} t={t} />
               </>
             )}
@@ -557,7 +595,7 @@ export default function ProfilePage() {
               <>
                 <StatsBlock role={role} statsData={profileStats} t={t} />
                 <JudgeWorkPanel items={judgeWork} t={t} />
-                <TeamAccessPanel teams={teams} currentUserId={user?.id} onManageTeam={handleManageTeam} t={t} />
+                <TeamAccessPanel teams={teams} currentUserId={user?.id} onManageTeam={handleManageTeam} onInviteTeamMember={handleInviteTeamMember} t={t} />
                 {role !== "admin" && <BadgesCertificatesPanel badges={profileBadges} certificates={profileCertificates} stats={profileStats} t={t} />}
               </>
             )}

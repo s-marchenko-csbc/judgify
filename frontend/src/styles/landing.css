@@ -1053,6 +1053,15 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   padding: 20px 22px 16px;
 }
 
+.competition-invite-message {
+  margin: 0 22px 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(240, 243, 250, 0.9);
+  color: #2b3d62;
+  font-weight: 700;
+}
+
 .competition-detail-title {
   margin: 0 0 8px;
   font-size: 28px;
@@ -1124,6 +1133,82 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   padding: 18px;
 }
 
+.announcement-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.announcement-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid #dfe5f1;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.announcement-editor input,
+.announcement-editor textarea {
+  width: 100%;
+  border: 1px solid #d8deeb;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font: inherit;
+  color: #202945;
+  background: #fff;
+}
+
+.announcement-editor textarea {
+  resize: vertical;
+}
+
+.announcement-editor-actions,
+.announcement-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.announcement-editor-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #505b72;
+  font-weight: 700;
+}
+
+.announcement-editor-actions button,
+.announcement-card-actions button {
+  border: none;
+  border-radius: 12px;
+  background: #3f76dd;
+  color: #fff;
+  font-weight: 700;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.announcement-editor-actions button.secondary,
+.announcement-card-actions button {
+  background: #edf2fb;
+  color: #2b3d62;
+}
+
+.announcement-card-actions button.danger {
+  background: #ffe8e8;
+  color: #a43333;
+}
+
+.announcement-editor-actions button:disabled,
+.announcement-card-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .announcement-header {
   display: flex;
   justify-content: space-between;
@@ -1149,10 +1234,26 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   font-weight: 700;
 }
 
-.announcement-time {
+.announcement-title {
+  margin-top: 2px;
+  color: #414b60;
+  font-weight: 600;
+}
+
+.announcement-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
   font-size: 14px;
   color: #8b90a0;
+  text-align: right;
   white-space: nowrap;
+}
+
+.announcement-meta span {
+  color: #3f76dd;
+  font-weight: 800;
 }
 
 .announcement-text {
@@ -1160,6 +1261,7 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   font-size: 16px;
   line-height: 1.6;
   color: #444b59;
+  white-space: pre-wrap;
 }
 
 .announcement-comment-form {
@@ -1201,6 +1303,12 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   background: #f7f8fc;
   border-radius: 10px;
   padding: 10px 12px;
+}
+
+.announcement-message {
+  color: #a43333;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .competition-detail-sidebar {
@@ -3993,6 +4101,31 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   font-weight: 800;
 }
 
+.landing-latest-block {
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(57, 88, 134, .2);
+}
+
+.landing-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.landing-section-heading h2 {
+  margin: 0;
+  color: var(--violet-4);
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.landing-latest-grid {
+  grid-template-columns: repeat(auto-fill, minmax(255px, 1fr));
+}
+
 @keyframes landingSkeletonSweep {
   100% {
     transform: translateX(100%);
@@ -4313,6 +4446,37 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   margin: 12px 0 0;
   color: #697894;
   font-size: 0.78rem;
+}
+
+.profile-team-invite {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.profile-team-invite input {
+  min-height: 40px;
+  border: 1px solid rgba(99, 142, 203, 0.28);
+  border-radius: 12px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #243451;
+}
+
+.profile-team-invite button {
+  border: none;
+  border-radius: 12px;
+  padding: 0 14px;
+  background: #3f76dd;
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.profile-team-invite button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 

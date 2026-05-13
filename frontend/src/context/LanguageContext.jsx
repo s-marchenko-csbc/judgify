@@ -314,6 +314,8 @@ const dictionaries = {
     },
     landing: {
       loading: "Loading...",
+      latestCompetitions: "Latest competitions",
+      empty: "No competitions in this tab yet.",
     },
     sidebar: {
       recentlyViewed: "Recently Viewed",

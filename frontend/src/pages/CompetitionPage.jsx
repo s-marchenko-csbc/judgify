@@ -13,7 +13,22 @@ import SignInModal from "../components/auth/SignInModal";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 
-import { fetchCompetitionDetail, fetchCompetitions, fetchCompetitionParticipants, fetchCompetitionResults, fetchCompetitionJudging, submitCompetitionScore, submitCompetitionWork, deleteCompetitionScore, respondJudgeAssignment } from "../api/landingApi";
+import {
+  addAnnouncementComment,
+  createCompetitionAnnouncement,
+  deleteCompetitionAnnouncement,
+  fetchCompetitionDetail,
+  fetchCompetitionJudging,
+  fetchCompetitionParticipants,
+  fetchCompetitionResults,
+  fetchCompetitions,
+  respondJudgeAssignment,
+  respondCompetitionInvitation,
+  submitCompetitionScore,
+  submitCompetitionWork,
+  updateCompetitionAnnouncement,
+  deleteCompetitionScore,
+} from "../api/landingApi";
 
 function capitalize(value) {
   if (!value) return "";
@@ -102,7 +117,6 @@ export default function CompetitionPage() {
   );
   const [loading, setLoading] = useState(!location.state?.competition);
   const [error, setError] = useState("");
-  const [commentText, setCommentText] = useState("");
   const [showJoinModal, setShowJoinModal] = useState(
     searchParams.get("join") === "1"
   );
@@ -111,6 +125,7 @@ export default function CompetitionPage() {
   const [activeTab, setActiveTab] = useState(
     searchParams.get("tab") || "overview"
   );
+  const [inviteMessage, setInviteMessage] = useState("");
 
   const canCurrentUserJoin =
     isAuthenticated
@@ -136,6 +151,41 @@ export default function CompetitionPage() {
       setAuthStep(null);
     }
   }, [authStep, isAuthenticated, showJoinModal]);
+
+  useEffect(() => {
+    const token = searchParams.get("invite");
+    if (!token) return;
+    if (!isAuthenticated) {
+      setAuthStep((current) => current || "signin");
+      return;
+    }
+
+    let cancelled = false;
+    async function acceptInvitation() {
+      setInviteMessage("");
+      try {
+        const result = await respondCompetitionInvitation(token, "accepted");
+        if (cancelled) return;
+        setInviteMessage(t("competitionPage.inviteAccepted", { defaultValue: "Invitation accepted." }));
+        setCompetition((prev) => prev ? {
+          ...prev,
+          user_participation_status: result?.participant?.status || "approved",
+          user_participation_role: result?.participant?.role || prev.user_participation_role,
+          user_team: result?.team || prev.user_team,
+          can_join: false,
+        } : prev);
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete("invite");
+        setSearchParams(nextParams);
+      } catch (error) {
+        if (!cancelled) setInviteMessage(error?.message || t("competitionPage.inviteError", { defaultValue: "Could not accept invitation." }));
+      }
+    }
+    acceptInvitation();
+    return () => {
+      cancelled = true;
+    };
+  }, [authStep, isAuthenticated, searchParams, setSearchParams, t]);
 
   useEffect(() => {
     setCompetition((prev) => {
@@ -292,30 +342,52 @@ export default function CompetitionPage() {
     closeJoinModal();
   };
 
-  const handleCommentPost = () => {
-    const text = commentText.trim();
+  const sortAnnouncements = (items = []) =>
+    [...items].sort((a, b) => {
+      if (Boolean(a.is_pinned) !== Boolean(b.is_pinned)) return a.is_pinned ? -1 : 1;
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
+
+  const patchAnnouncements = (updater) => {
+    setCompetition((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        announcements: sortAnnouncements(updater(prev.announcements || [])),
+      };
+    });
+  };
+
+  const handleAnnouncementCreate = async (payload) => {
+    const announcement = await createCompetitionAnnouncement(id, payload);
+    patchAnnouncements((items) => [announcement, ...items]);
+    return announcement;
+  };
+
+  const handleAnnouncementUpdate = async (announcementId, payload) => {
+    const announcement = await updateCompetitionAnnouncement(id, { ...payload, id: announcementId });
+    patchAnnouncements((items) => items.map((item) => (item.id === announcement.id ? announcement : item)));
+    return announcement;
+  };
+
+  const handleAnnouncementDelete = async (announcementId) => {
+    await deleteCompetitionAnnouncement(id, announcementId);
+    patchAnnouncements((items) => items.filter((item) => item.id !== announcementId));
+  };
+
+  const handleCommentPost = async (announcementId, textValue) => {
+    const text = String(textValue || "").trim();
     if (!text) return;
 
-    setCompetition((prev) => ({
-      ...prev,
-      announcements: prev.announcements.map((announcement, index) =>
-        index === 0
-          ? {
-              ...announcement,
-              comments: [
-                ...(announcement.comments || []),
-                {
-                  id: Date.now(),
-                  author: t("competitionPage.you"),
-                  text,
-                },
-              ],
-            }
+    const comment = await addAnnouncementComment(announcementId, { text });
+    patchAnnouncements((items) =>
+      items.map((announcement) =>
+        announcement.id === announcementId
+          ? { ...announcement, comments: [...(announcement.comments || []), comment] }
           : announcement
-      ),
-    }));
-
-    setCommentText("");
+      )
+    );
+    return comment;
   };
 
   const handleScoreSubmit = async (payload) => {
@@ -426,6 +498,7 @@ export default function CompetitionPage() {
                 onJoin={openJoinModal}
                 onEdit={() => navigate(`/competitions/${competition.id}/edit`)}
               />
+              {inviteMessage && <div className="competition-invite-message">{inviteMessage}</div>}
 
               <CompetitionTabs
                 activeTab={activeTab}
@@ -435,9 +508,10 @@ export default function CompetitionPage() {
               <CompetitionTabContent
                 activeTab={activeTab}
                 competition={competition}
-                commentText={commentText}
-                onCommentTextChange={setCommentText}
                 onCommentPost={handleCommentPost}
+                onAnnouncementCreate={handleAnnouncementCreate}
+                onAnnouncementUpdate={handleAnnouncementUpdate}
+                onAnnouncementDelete={handleAnnouncementDelete}
                 onScoreSubmit={handleScoreSubmit}
                 onSubmissionCreate={handleSubmissionCreate}
                 onScoreDelete={handleScoreDelete}

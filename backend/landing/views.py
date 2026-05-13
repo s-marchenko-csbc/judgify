@@ -112,6 +112,14 @@ def set_platform_setting(key, value):
     return value
 
 
+def request_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def recompute_competition_timing(competition, now=None, save=True):
     """Synchronize status flags with competition and round deadlines.
 
@@ -233,7 +241,12 @@ def recompute_competition_timing(competition, now=None, save=True):
     if status_value == "registration_open":
         timer_deadline = competition.registration_ends_at or competition.starts_at
     elif status_value == "upcoming":
-        timer_deadline = competition.starts_at
+        future_milestones = [
+            value
+            for value in [competition.registration_starts_at, competition.starts_at]
+            if value and value > now
+        ]
+        timer_deadline = min(future_milestones) if future_milestones else competition.starts_at
     elif status_value == "active":
         if round_deadline:
             timer_deadline = round_deadline
@@ -295,6 +308,46 @@ def user_primary_role(user):
 def user_can_create_competitions(user):
     role = user_primary_role(user)
     return user_is_admin(user) or role == "organizer"
+
+
+def active_participation_roles():
+    return ["participant", "team_member", "judge"]
+
+
+def user_has_active_team_conflict(user, competition, team=None):
+    if not user or not user.is_authenticated:
+        return False
+    qs = CompetitionParticipant.objects.filter(
+        competition=competition,
+        user=user,
+        role__in=["participant", "team_member"],
+        status__in=["pending", "approved"],
+    )
+    if team:
+        qs = qs.exclude(team=team)
+    return qs.exists()
+
+
+def user_is_competition_judge(user, competition):
+    if not user or not user.is_authenticated:
+        return False
+    return CompetitionParticipant.objects.filter(
+        competition=competition,
+        user=user,
+        role="judge",
+        status__in=["pending", "approved"],
+    ).exists()
+
+
+def user_has_participation_for_judge_conflict(user, competition):
+    if not user or not user.is_authenticated:
+        return False
+    return CompetitionParticipant.objects.filter(
+        competition=competition,
+        user=user,
+        role__in=["participant", "team_member"],
+        status__in=["pending", "approved"],
+    ).exists()
 
 
 COMMON_COMPROMISED_PASSWORDS = {
@@ -1406,9 +1459,27 @@ class LandingSidebarView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        now = timezone.now()
+        latest_competitions = list(
+            Competition.objects.filter(is_public=True, show_in_catalog=True)
+            .exclude(status__in=["draft", "archived"])
+            .order_by("-updated_at", "-created_at")[:6]
+        )
+        latest_competitions = [
+            recompute_competition_timing(competition, now=now, save=False)
+            for competition in latest_competitions
+        ]
+        latest_competitions = [
+            competition
+            for competition in latest_competitions
+            if competition.status != "archived"
+        ]
+
         if not request.user.is_authenticated:
             return Response({
-                "last_competitions": [],
+                "recently_viewed": [],
+                "recent_materials": [],
+                "last_competitions": SidebarCompetitionSerializer(latest_competitions, many=True).data,
                 "saved_competitions": [],
             })
 
@@ -1444,7 +1515,7 @@ class LandingSidebarView(APIView):
                 many=True,
                 context={"request": request},
             ).data,
-            "last_competitions": SidebarCompetitionSerializer(recent_competitions, many=True).data,
+            "last_competitions": SidebarCompetitionSerializer(latest_competitions, many=True).data,
             "saved_competitions": SidebarCompetitionSerializer(saved_competitions, many=True).data,
         })
 
@@ -1590,6 +1661,16 @@ class MarkMaterialViewedView(APIView):
         )
 
 
+def user_can_manage_announcement(user, announcement):
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_staff or user.is_superuser or user_is_admin(user):
+        return True
+    if announcement.author_id:
+        return announcement.author_id == user.id
+    return user_can_edit_competition(user, announcement.competition)
+
+
 class CompetitionAnnouncementsView(APIView):
     permission_classes = [AllowAny]
 
@@ -1607,6 +1688,7 @@ class CompetitionAnnouncementsView(APIView):
         serializer = CompetitionAnnouncementSerializer(
             announcements,
             many=True,
+            context={"request": request},
         )
         return Response(serializer.data)
 
@@ -1619,12 +1701,15 @@ class CompetitionAnnouncementsView(APIView):
             "competition": competition.id,
             "title": (request.data.get("title") or "").strip(),
             "text": (request.data.get("text") or "").strip(),
-            "is_pinned": bool(request.data.get("is_pinned", False)),
+            "is_pinned": request_bool(request.data.get("is_pinned"), False),
         }
         serializer = CompetitionAnnouncementSerializer(data=payload)
         serializer.is_valid(raise_exception=True)
         announcement = serializer.save(author=request.user, competition=competition)
-        return Response(CompetitionAnnouncementSerializer(announcement).data, status=status.HTTP_201_CREATED)
+        return Response(
+            CompetitionAnnouncementSerializer(announcement, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     def patch(self, request, pk):
         competition = get_object_or_404(Competition, pk=pk)
@@ -1632,10 +1717,15 @@ class CompetitionAnnouncementsView(APIView):
             return Response({"detail": "You cannot edit announcements for this competition."}, status=status.HTTP_403_FORBIDDEN)
 
         announcement = get_object_or_404(CompetitionAnnouncement, pk=request.data.get("id"), competition=competition)
-        serializer = CompetitionAnnouncementSerializer(announcement, data=request.data, partial=True)
+        if not user_can_manage_announcement(request.user, announcement):
+            return Response({"detail": "You can edit only your own announcements."}, status=status.HTTP_403_FORBIDDEN)
+        payload = request.data.copy()
+        if "is_pinned" in payload:
+            payload["is_pinned"] = request_bool(payload.get("is_pinned"), False)
+        serializer = CompetitionAnnouncementSerializer(announcement, data=payload, partial=True)
         serializer.is_valid(raise_exception=True)
         announcement = serializer.save(competition=competition)
-        return Response(CompetitionAnnouncementSerializer(announcement).data)
+        return Response(CompetitionAnnouncementSerializer(announcement, context={"request": request}).data)
 
     def delete(self, request, pk):
         competition = get_object_or_404(Competition, pk=pk)
@@ -1643,6 +1733,8 @@ class CompetitionAnnouncementsView(APIView):
             return Response({"detail": "You cannot edit announcements for this competition."}, status=status.HTTP_403_FORBIDDEN)
 
         announcement = get_object_or_404(CompetitionAnnouncement, pk=request.data.get("id") or request.query_params.get("id"), competition=competition)
+        if not user_can_manage_announcement(request.user, announcement):
+            return Response({"detail": "You can delete only your own announcements."}, status=status.HTTP_403_FORBIDDEN)
         announcement.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1652,6 +1744,11 @@ class AddAnnouncementCommentView(APIView):
 
     def post(self, request, pk):
         announcement = get_object_or_404(CompetitionAnnouncement, pk=pk)
+        if not announcement.competition.is_public and not user_can_edit_competition(request.user, announcement.competition):
+            return Response(
+                {"detail": "Comments are not available for this announcement."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         text = (request.data.get("text") or "").strip()
         if not text:
@@ -1672,7 +1769,7 @@ class AddAnnouncementCommentView(APIView):
         ).count()
         competition.save(update_fields=["comments_count"])
 
-        serializer = CompetitionAnnouncementCommentSerializer(comment)
+        serializer = CompetitionAnnouncementCommentSerializer(comment, context={"request": request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
@@ -1733,7 +1830,7 @@ class JoinCompetitionView(APIView):
             competition=competition,
             user=request.user,
         ).select_related("team").first()
-        if existing_member and existing_member.role == "judge":
+        if existing_member and existing_member.role == "judge" and existing_member.status in ["pending", "approved"]:
             return Response(
                 {"detail": "Judges cannot participate in the same competition they judge."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -1762,15 +1859,25 @@ class JoinCompetitionView(APIView):
                     {"detail": "Team name is required for team participation."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            team, _ = CompetitionTeam.objects.get_or_create(
-                competition=competition,
-                name=team_name,
-                defaults={
-                    "captain": request.user,
-                    "status": "pending",
-                    "description": (request.data.get("team_description") or "").strip(),
-                },
-            )
+            team = CompetitionTeam.objects.filter(competition=competition, name=team_name).first()
+            if team and team.captain_id and team.captain_id != request.user.id:
+                return Response(
+                    {"detail": "Join this team through an invitation from its captain."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if team and user_has_active_team_conflict(request.user, competition, team=team):
+                return Response(
+                    {"detail": "You already belong to another team in this competition."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not team:
+                team = CompetitionTeam.objects.create(
+                    competition=competition,
+                    name=team_name,
+                    captain=request.user,
+                    status="pending",
+                    description=(request.data.get("team_description") or "").strip(),
+                )
 
         full_name = request.user.get_full_name().strip()
         display_name = full_name or getattr(request.user, "username", "") or getattr(request.user, "email", "")
@@ -1909,6 +2016,43 @@ class TeamManagementView(APIView):
                 return Response({"detail": "You are already the captain of this team."}, status=status.HTTP_400_BAD_REQUEST)
             team.captain = member.user
             team.save(update_fields=["captain", "updated_at"])
+
+        elif action == "invite_member":
+            email = normalize_email(request.data.get("email"))
+            if not email:
+                return Response({"detail": "Member email is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if not team.competition.allow_user_team_invites and not user_can_edit_competition(request.user, team.competition):
+                return Response({"detail": "Team member invitations are disabled for this competition."}, status=status.HTTP_403_FORBIDDEN)
+            User = get_user_model()
+            invited_user = User.objects.filter(email__iexact=email).first()
+            if invited_user:
+                if user_is_competition_judge(invited_user, team.competition):
+                    return Response({"detail": "Judges cannot join teams in the same competition."}, status=status.HTTP_400_BAD_REQUEST)
+                if user_has_active_team_conflict(invited_user, team.competition, team=team):
+                    return Response({"detail": "This user already belongs to another team in this competition."}, status=status.HTTP_400_BAD_REQUEST)
+            token = secrets.token_urlsafe(32)
+            invitation, _ = CompetitionInvitation.objects.update_or_create(
+                competition=team.competition,
+                email=email,
+                target_type="team",
+                team_name=team.name,
+                defaults={
+                    "invited_by": request.user,
+                    "token": token,
+                    "status": "queued",
+                    "message": (request.data.get("message") or "").strip(),
+                },
+            )
+            OutboundMessage.objects.create(
+                competition=team.competition,
+                invitation=invitation,
+                recipient_email=email,
+                channel="email",
+                subject=f"Team invitation: {team.competition.name}",
+                body=(invitation.message or f"You are invited to join team {team.name}.") + f"\n\nInvitation link: /competitions/{team.competition_id}?invite={invitation.token}",
+                status="queued",
+                queued_at=timezone.now(),
+            )
 
         elif action == "update_member":
             member = get_object_or_404(CompetitionParticipant, pk=member_id, team=team)
@@ -3126,6 +3270,12 @@ class CompetitionJudgeAssignmentView(APIView):
         if changed:
             user.save()
 
+        if user_has_participation_for_judge_conflict(user, competition):
+            return Response(
+                {"detail": "Participants and team members cannot be assigned as judges in the same competition."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         profile = get_or_create_profile(user, {"primary_role": "participant"})
         if not profile.display_name and display_name:
             profile.display_name = display_name
@@ -3167,6 +3317,12 @@ class CompetitionJudgeAssignmentResponseView(APIView):
         decision = (request.data.get("decision") or request.data.get("status") or "").strip().lower()
         if decision not in {"accepted", "declined"}:
             return Response({"detail": "Decision must be accepted or declined."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if decision == "accepted" and user_has_participation_for_judge_conflict(request.user, assignment.competition):
+            return Response(
+                {"detail": "Participants and team members cannot judge the same competition."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         assignment.status = decision
         assignment.save(update_fields=["status", "updated_at"])
@@ -3262,16 +3418,23 @@ class CompetitionInvitationView(APIView):
 
     def post(self, request, pk):
         competition = get_object_or_404(Competition, pk=pk)
-        if not user_can_edit_competition(request.user, competition):
-            return Response({"detail": "You cannot invite users to this competition."}, status=status.HTTP_403_FORBIDDEN)
-
         recipients = request.data.get("recipients") or []
         if isinstance(recipients, str):
             recipients = [line.strip() for line in recipients.replace(",", "\n").splitlines() if line.strip()]
         target_type = request.data.get("target_type") or "individual"
         team_name = (request.data.get("team_name") or "").strip()
         message = request.data.get("message") or ""
-        queue_messages = bool(request.data.get("queue_messages", True))
+        queue_messages = request_bool(request.data.get("queue_messages"), True)
+
+        can_invite = user_can_edit_competition(request.user, competition)
+        if not can_invite and target_type == "team" and team_name:
+            can_invite = CompetitionTeam.objects.filter(
+                competition=competition,
+                name=team_name,
+                captain=request.user,
+            ).exists()
+        if not can_invite:
+            return Response({"detail": "You cannot invite users to this competition."}, status=status.HTTP_403_FORBIDDEN)
 
         created = []
         for email in recipients:
@@ -3302,6 +3465,91 @@ class CompetitionInvitationView(APIView):
                     queued_at=timezone.now(),
                 )
         return Response(CompetitionInvitationSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
+
+
+class CompetitionInvitationResponseView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, token):
+        invitation = get_object_or_404(
+            CompetitionInvitation.objects.select_related("competition", "invited_by"),
+            token=token,
+        )
+        decision = (request.data.get("decision") or request.data.get("status") or "").strip().lower()
+        if decision not in {"accepted", "declined"}:
+            return Response({"detail": "Decision must be accepted or declined."}, status=status.HTTP_400_BAD_REQUEST)
+        if invitation.expires_at and timezone.now() > invitation.expires_at:
+            invitation.status = "expired"
+            invitation.responded_at = timezone.now()
+            invitation.save(update_fields=["status", "responded_at"])
+            return Response({"detail": "This invitation has expired."}, status=status.HTTP_400_BAD_REQUEST)
+        if normalize_email(request.user.email) != normalize_email(invitation.email):
+            return Response({"detail": "This invitation was sent to another email address."}, status=status.HTTP_403_FORBIDDEN)
+
+        if decision == "declined":
+            invitation.status = "declined"
+            invitation.responded_at = timezone.now()
+            invitation.save(update_fields=["status", "responded_at"])
+            return Response(CompetitionInvitationSerializer(invitation).data)
+
+        competition = invitation.competition
+        if user_is_competition_judge(request.user, competition):
+            return Response({"detail": "Judges cannot join teams in the same competition."}, status=status.HTTP_400_BAD_REQUEST)
+
+        role = "team_member" if invitation.target_type == "team" else "participant"
+        team = None
+        if invitation.target_type == "team":
+            if not invitation.team_name:
+                return Response({"detail": "Team invitation is missing a team name."}, status=status.HTTP_400_BAD_REQUEST)
+            team = CompetitionTeam.objects.filter(competition=competition, name=invitation.team_name).first()
+            if not team:
+                return Response({"detail": "The invited team no longer exists."}, status=status.HTTP_400_BAD_REQUEST)
+            if user_has_active_team_conflict(request.user, competition, team=team):
+                return Response({"detail": "You already belong to another team in this competition."}, status=status.HTTP_400_BAD_REQUEST)
+        elif user_has_active_team_conflict(request.user, competition):
+            return Response({"detail": "You already have an active participation record for this competition."}, status=status.HTTP_400_BAD_REQUEST)
+
+        invitation.status = "accepted"
+        invitation.responded_at = timezone.now()
+        invitation.save(update_fields=["status", "responded_at"])
+
+        status_value = "approved" if not team or team.status == "approved" else "pending"
+        display_name = request.user.get_full_name() or request.user.get_username() or request.user.email
+        participant, _ = CompetitionParticipant.objects.update_or_create(
+            competition=competition,
+            user=request.user,
+            defaults={
+                "display_name": display_name,
+                "role": role,
+                "status": status_value,
+                "team": team,
+                "is_active_now": False,
+            },
+        )
+        CompetitionJoinRequest.objects.update_or_create(
+            competition=competition,
+            user=request.user,
+            role=role,
+            defaults={
+                "status": status_value,
+                "team": team,
+                "team_name": team.name if team else "",
+                "message": invitation.message,
+                "reviewed_by": invitation.invited_by,
+                "reviewed_at": timezone.now() if status_value == "approved" else None,
+            },
+        )
+        competition.participants_count = CompetitionParticipant.objects.filter(
+            competition=competition,
+            status="approved",
+            role__in=["participant", "team_member"],
+        ).count()
+        competition.save(update_fields=["participants_count"])
+        return Response({
+            "invitation": CompetitionInvitationSerializer(invitation).data,
+            "participant": CompetitionParticipantSerializer(participant).data,
+            "team": CompetitionTeamSerializer(team).data if team else None,
+        })
 
 
 class CompetitionOutboundMessagesView(APIView):

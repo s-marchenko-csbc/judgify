@@ -451,6 +451,7 @@ class CompetitionPlannedEventSerializer(serializers.ModelSerializer):
 
 class CompetitionAnnouncementCommentSerializer(serializers.ModelSerializer):
     author_name = serializers.SerializerMethodField()
+    author_avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = CompetitionAnnouncementComment
@@ -458,6 +459,7 @@ class CompetitionAnnouncementCommentSerializer(serializers.ModelSerializer):
             "id",
             "author",
             "author_name",
+            "author_avatar_url",
             "text",
             "created_at",
         ]
@@ -465,6 +467,7 @@ class CompetitionAnnouncementCommentSerializer(serializers.ModelSerializer):
             "id",
             "author",
             "author_name",
+            "author_avatar_url",
             "created_at",
         ]
 
@@ -476,9 +479,20 @@ class CompetitionAnnouncementCommentSerializer(serializers.ModelSerializer):
             return getattr(obj.author, "username", "") or getattr(obj.author, "email", "")
         return ""
 
+    def get_author_avatar_url(self, obj):
+        profile = getattr(obj.author, "profile", None) if obj.author else None
+        if profile and profile.avatar:
+            request = self.context.get("request")
+            url = profile.avatar.url
+            return request.build_absolute_uri(url) if request else url
+        return ""
+
 
 class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
     author_name = serializers.SerializerMethodField()
+    author_avatar_url = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    can_comment = serializers.SerializerMethodField()
     comments = CompetitionAnnouncementCommentSerializer(many=True, read_only=True)
 
     class Meta:
@@ -490,8 +504,11 @@ class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
             "text",
             "author",
             "author_name",
+            "author_avatar_url",
             "is_pinned",
             "created_at",
+            "can_edit",
+            "can_comment",
             "comments",
         ]
         read_only_fields = [
@@ -499,7 +516,10 @@ class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
             "competition",
             "author",
             "author_name",
+            "author_avatar_url",
             "created_at",
+            "can_edit",
+            "can_comment",
             "comments",
         ]
 
@@ -510,6 +530,28 @@ class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
                 return full_name
             return getattr(obj.author, "username", "") or getattr(obj.author, "email", "")
         return "Organizer"
+
+    def get_author_avatar_url(self, obj):
+        profile = getattr(obj.author, "profile", None) if obj.author else None
+        if profile and profile.avatar:
+            request = self.context.get("request")
+            url = profile.avatar.url
+            return request.build_absolute_uri(url) if request else url
+        return ""
+
+    def get_can_edit(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_staff or user.is_superuser:
+            return True
+        return bool(obj.author_id and obj.author_id == user.id)
+
+    def get_can_comment(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return bool(user and user.is_authenticated and obj.competition.is_public)
 
 
 class TeamMemberSerializer(serializers.ModelSerializer):
@@ -827,11 +869,25 @@ class SidebarCompetitionSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "slug",
+            "short_description",
             "cover_image",
             "participants_count",
             "comments_count",
             "status",
+            "industry",
             "language",
+            "current_round",
+            "total_rounds",
+            "registration_open",
+            "submissions_open",
+            "registration_starts_at",
+            "registration_ends_at",
+            "starts_at",
+            "ends_at",
+            "judging_starts_at",
+            "judging_ends_at",
+            "results_public_at",
+            "timer_deadline",
         ]
 
 
@@ -1062,6 +1118,7 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
     rounds = CompetitionRoundSerializer(many=True, read_only=True)
     materials = CompetitionMaterialSerializer(many=True, read_only=True)
     planned_events = CompetitionPlannedEventSerializer(many=True, read_only=True)
+    announcements = CompetitionAnnouncementSerializer(many=True, read_only=True)
     submission_settings = CompetitionSubmissionSettingsSerializer(read_only=True)
 
     class Meta:
@@ -1123,6 +1180,7 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "submission_settings",
             "materials",
             "planned_events",
+            "announcements",
             "is_saved",
             "is_watching",
             "user_participation_status",
@@ -1150,6 +1208,7 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "materials",
             "submission_settings",
             "planned_events",
+            "announcements",
             "is_saved",
             "is_watching",
             "user_participation_status",

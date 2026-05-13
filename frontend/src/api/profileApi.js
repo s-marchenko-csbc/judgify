@@ -34,3 +34,10 @@ export function updateTeamManagement(teamId, payload = {}) {
     body: JSON.stringify(payload),
   });
 }
+
+export function inviteTeamMember(teamId, payload = {}) {
+  return updateTeamManagement(teamId, {
+    action: "invite_member",
+    ...payload,
+  });
+}

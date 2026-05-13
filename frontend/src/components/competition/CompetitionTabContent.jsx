@@ -7,9 +7,10 @@ import JudgingTab from "./tabs/JudgingTab";
 export default function CompetitionTabContent({
   activeTab,
   competition,
-  commentText,
-  onCommentTextChange,
   onCommentPost,
+  onAnnouncementCreate,
+  onAnnouncementUpdate,
+  onAnnouncementDelete,
   onScoreSubmit,
   onSubmissionCreate,
   onScoreDelete,
@@ -38,9 +39,10 @@ export default function CompetitionTabContent({
   return (
     <OverviewTab
       competition={competition}
-      commentText={commentText}
-      onCommentTextChange={onCommentTextChange}
       onCommentPost={onCommentPost}
+      onAnnouncementCreate={onAnnouncementCreate}
+      onAnnouncementUpdate={onAnnouncementUpdate}
+      onAnnouncementDelete={onAnnouncementDelete}
     />
   );
 }

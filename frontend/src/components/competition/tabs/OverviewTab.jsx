@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useAuth } from "../../../context/AuthContext";
 import { useLanguage } from "../../../context/LanguageContext";
 
 function getEmbedUrl(value) {
@@ -82,12 +83,96 @@ function StreamBlock({ competition }) {
 
 export default function OverviewTab({
   competition,
-  commentText,
-  onCommentTextChange,
   onCommentPost,
+  onAnnouncementCreate,
+  onAnnouncementUpdate,
+  onAnnouncementDelete,
 }) {
   const { t } = useLanguage();
-  const announcement = competition.announcements?.[0];
+  const { isAuthenticated } = useAuth();
+  const announcements = useMemo(() => competition.announcements || [], [competition.announcements]);
+  const [draft, setDraft] = useState({ id: null, title: "", text: "", is_pinned: false });
+  const [commentDrafts, setCommentDrafts] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setDraft({ id: null, title: "", text: "", is_pinned: false });
+    setCommentDrafts({});
+    setMessage("");
+  }, [competition.id]);
+
+  const resetDraft = () => setDraft({ id: null, title: "", text: "", is_pinned: false });
+
+  const startEdit = (announcement) => {
+    setDraft({
+      id: announcement.id,
+      title: announcement.title || "",
+      text: announcement.text || "",
+      is_pinned: Boolean(announcement.is_pinned),
+    });
+    setMessage("");
+  };
+
+  const submitAnnouncement = async (event) => {
+    event.preventDefault();
+    if (!competition.can_edit || !draft.title.trim() || !draft.text.trim()) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      const payload = {
+        title: draft.title.trim(),
+        text: draft.text.trim(),
+        is_pinned: draft.is_pinned,
+      };
+      if (draft.id) await onAnnouncementUpdate?.(draft.id, payload);
+      else await onAnnouncementCreate?.(payload);
+      resetDraft();
+    } catch (error) {
+      setMessage(error?.message || t("overviewTab.announcementSaveError", { defaultValue: "Could not save announcement." }));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeAnnouncement = async (announcementId) => {
+    if (!onAnnouncementDelete) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      await onAnnouncementDelete(announcementId);
+      if (draft.id === announcementId) resetDraft();
+    } catch (error) {
+      setMessage(error?.message || t("overviewTab.announcementDeleteError", { defaultValue: "Could not delete announcement." }));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitComment = async (announcementId) => {
+    const text = String(commentDrafts[announcementId] || "").trim();
+    if (!text || !onCommentPost) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      await onCommentPost(announcementId, text);
+      setCommentDrafts((prev) => ({ ...prev, [announcementId]: "" }));
+    } catch (error) {
+      setMessage(error?.message || t("overviewTab.commentSaveError", { defaultValue: "Could not post comment." }));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const authorName = (announcement) =>
+    announcement.author_name || announcement.author || t("overviewTab.organizer", { defaultValue: "Organizer" });
+  const avatar = (announcement) =>
+    announcement.author_avatar_url || announcement.avatar || "https://api.dicebear.com/7.x/initials/svg?seed=Organizer";
+  const dateLabel = (announcement) => {
+    if (announcement.postedAgo) return announcement.postedAgo;
+    if (!announcement.created_at) return "";
+    return new Date(announcement.created_at).toLocaleString();
+  };
 
   return (
     <section className="competition-panel">
@@ -95,48 +180,107 @@ export default function OverviewTab({
 
       <h2 className="competition-section-title">{t("overviewTab.announcements")}</h2>
 
-      {!announcement ? (
+      {competition.can_edit && (
+        <form className="announcement-editor" onSubmit={submitAnnouncement}>
+          <input
+            value={draft.title}
+            onChange={(event) => setDraft((prev) => ({ ...prev, title: event.target.value }))}
+            placeholder={t("overviewTab.announcementTitle", { defaultValue: "Announcement title" })}
+          />
+          <textarea
+            value={draft.text}
+            onChange={(event) => setDraft((prev) => ({ ...prev, text: event.target.value }))}
+            placeholder={t("overviewTab.announcementText", { defaultValue: "Message for participants" })}
+            rows="4"
+          />
+          <div className="announcement-editor-actions">
+            <label>
+              <input
+                type="checkbox"
+                checked={draft.is_pinned}
+                onChange={(event) => setDraft((prev) => ({ ...prev, is_pinned: event.target.checked }))}
+              />
+              {t("overviewTab.pinAnnouncement", { defaultValue: "Pin" })}
+            </label>
+            <button type="submit" disabled={saving || !draft.title.trim() || !draft.text.trim()}>
+              {draft.id
+                ? t("overviewTab.saveAnnouncement", { defaultValue: "Save" })
+                : t("overviewTab.addAnnouncement", { defaultValue: "Add announcement" })}
+            </button>
+            {draft.id && (
+              <button type="button" className="secondary" onClick={resetDraft} disabled={saving}>
+                {t("overviewTab.cancelEdit", { defaultValue: "Cancel" })}
+              </button>
+            )}
+          </div>
+          {message && <span className="announcement-message">{message}</span>}
+        </form>
+      )}
+
+      {!announcements.length ? (
         <p className="competition-empty-note">{t("overviewTab.emptyAnnouncements")}</p>
       ) : (
-        <div className="announcement-card">
-          <div className="announcement-header">
-            <div className="announcement-author-wrap">
-              <img
-                src={announcement.avatar}
-                alt={announcement.author}
-                className="announcement-avatar"
-              />
-              <div>
-                <div className="announcement-author">{announcement.author}</div>
-              </div>
-            </div>
-
-            <div className="announcement-time">🗂 {announcement.postedAgo}</div>
-          </div>
-
-          <p className="announcement-text">{announcement.text}</p>
-
-          <div className="announcement-comment-form">
-            <input
-              type="text"
-              placeholder={t("overviewTab.commentPlaceholder")}
-              value={commentText}
-              onChange={(e) => onCommentTextChange(e.target.value)}
-            />
-            <button type="button" onClick={onCommentPost}>
-              {t("overviewTab.post")}
-            </button>
-          </div>
-
-          {(announcement.comments || []).length > 0 && (
-            <div className="announcement-comment-list">
-              {announcement.comments.map((comment) => (
-                <div key={comment.id} className="announcement-comment-item">
-                  <strong>{comment.author}:</strong> {comment.text}
+        <div className="announcement-list">
+          {announcements.map((announcement) => (
+            <article className="announcement-card" key={announcement.id}>
+              <div className="announcement-header">
+                <div className="announcement-author-wrap">
+                  <img
+                    src={avatar(announcement)}
+                    alt={authorName(announcement)}
+                    className="announcement-avatar"
+                  />
+                  <div>
+                    <div className="announcement-author">{authorName(announcement)}</div>
+                    <div className="announcement-title">{announcement.title}</div>
+                  </div>
                 </div>
-              ))}
-            </div>
-          )}
+
+                <div className="announcement-meta">
+                  {announcement.is_pinned && <span>{t("overviewTab.pinned", { defaultValue: "Pinned" })}</span>}
+                  <time>{dateLabel(announcement)}</time>
+                </div>
+              </div>
+
+              <p className="announcement-text">{announcement.text}</p>
+
+              {announcement.can_edit && (
+                <div className="announcement-card-actions">
+                  <button type="button" onClick={() => startEdit(announcement)} disabled={saving}>
+                    {t("overviewTab.editAnnouncement", { defaultValue: "Edit" })}
+                  </button>
+                  <button type="button" className="danger" onClick={() => removeAnnouncement(announcement.id)} disabled={saving}>
+                    {t("overviewTab.deleteAnnouncement", { defaultValue: "Delete" })}
+                  </button>
+                </div>
+              )}
+
+              {isAuthenticated && announcement.can_comment !== false && (
+                <div className="announcement-comment-form">
+                  <input
+                    type="text"
+                    placeholder={t("overviewTab.commentPlaceholder")}
+                    value={commentDrafts[announcement.id] || ""}
+                    onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [announcement.id]: event.target.value }))}
+                  />
+                  <button type="button" onClick={() => submitComment(announcement.id)} disabled={saving || !String(commentDrafts[announcement.id] || "").trim()}>
+                    {t("overviewTab.post")}
+                  </button>
+                </div>
+              )}
+
+              {(announcement.comments || []).length > 0 && (
+                <div className="announcement-comment-list">
+                  {announcement.comments.map((comment) => (
+                    <div key={comment.id} className="announcement-comment-item">
+                      <strong>{comment.author_name || comment.author}:</strong> {comment.text}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+          ))}
+          {!competition.can_edit && message && <span className="announcement-message">{message}</span>}
         </div>
       )}
     </section>

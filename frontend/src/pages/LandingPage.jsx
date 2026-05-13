@@ -96,7 +96,16 @@ function deriveTimedCompetition(item, now) {
 
   let timerDeadline = null;
   if (status === "registration_open") timerDeadline = item.registration_ends_at || item.starts_at;
-  else if (status === "upcoming") timerDeadline = item.starts_at;
+  else if (status === "upcoming") {
+    const futureMilestones = [
+      item.registration_starts_at,
+      item.starts_at,
+    ].filter((value) => {
+      const time = toTime(value);
+      return time && time > now;
+    });
+    timerDeadline = futureMilestones.sort((a, b) => toTime(a) - toTime(b))[0] || item.starts_at;
+  }
   else if (status === "active") timerDeadline = item.timer_deadline || item.ends_at;
   else if (status === "judging") timerDeadline = item.judging_ends_at || item.results_public_at;
   else if (status === "finished") timerDeadline = resultsPublicAt && resultsPublicAt > now ? item.results_public_at : null;
@@ -130,6 +139,28 @@ function LandingSkeleton({ withSidebar = false }) {
         </aside>
       )}
     </div>
+  );
+}
+
+function LatestCompetitionsBlock({ items, now, onSavedChange, title }) {
+  if (!items.length) return null;
+
+  return (
+    <section className="landing-latest-block landing-results-enter" aria-labelledby="landing-latest-title">
+      <div className="landing-section-heading">
+        <h2 id="landing-latest-title">{title}</h2>
+      </div>
+      <div className="cards-grid landing-latest-grid">
+        {items.map((item) => (
+          <CompetitionCard
+            key={`latest-${item.id}`}
+            item={item}
+            now={now}
+            onSavedChange={onSavedChange}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -183,6 +214,9 @@ export default function LandingPage() {
 
   const [authStep, setAuthStep] = useState(null);
   const [pendingSignUpData, setPendingSignUpData] = useState(null);
+  const latestTitle = language === "uk"
+    ? "Останні змагання"
+    : t("landing.latestCompetitions", { defaultValue: "Latest competitions" });
 
   const requestFilters = useMemo(
     () => ({
@@ -206,6 +240,17 @@ export default function LandingPage() {
     const tabStatuses = statusTabs[filters.tab] || statusTabs.registration_open;
     return timedCompetitions.filter((item) => tabStatuses.includes(item.status));
   }, [filters.tab, timedCompetitions]);
+
+  const latestCompetitions = useMemo(() => {
+    const latest = sidebarData?.last_competitions || [];
+    return latest
+      .map((item) => deriveTimedCompetition({
+        ...item,
+        is_saved: isAuthenticated && savedIds.has(item.id),
+      }, now))
+      .filter((item) => item?.status !== "archived")
+      .slice(0, 6);
+  }, [isAuthenticated, now, savedIds, sidebarData]);
 
   useEffect(() => {
     fetchLandingFilters(language).then(setFilterOptions).catch(console.error);
@@ -287,15 +332,27 @@ export default function LandingPage() {
   }, [authSessionKey, isAuthenticated, savedIds]);
 
   useEffect(() => {
+    let cancelled = false;
+    const requestAuthKey = authSessionKey;
+
     if (!isAuthenticated) {
       setSidebarData(null);
       setSavedIds(new Set());
       setCompetitions((prev) => mergeSavedState(prev, new Set(), { isAuthenticated: false }));
-      return;
+      fetchSidebar()
+        .then((data) => {
+          if (cancelled || requestAuthKey !== authSessionKey) return;
+          setSidebarData({
+            ...(data || {}),
+            saved_competitions: [],
+          });
+        })
+        .catch(console.error);
+      return () => {
+        cancelled = true;
+      };
     }
 
-    let cancelled = false;
-    const requestAuthKey = authSessionKey;
     setSidebarData(null);
     setSavedIds(new Set());
     setCompetitions((prev) => mergeSavedState(prev, new Set(), { isAuthenticated: false }));
@@ -482,6 +539,15 @@ export default function LandingPage() {
                 <RightSidebar data={sidebarData} onSavedChange={handleSavedChange} />
               )}
             </div>
+          )}
+
+          {!loading && !isAuthenticated && (
+            <LatestCompetitionsBlock
+              items={latestCompetitions}
+              now={now}
+              onSavedChange={handleSavedChange}
+              title={latestTitle}
+            />
           )}
         </main>
       </div>

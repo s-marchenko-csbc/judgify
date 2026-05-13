@@ -63,6 +63,37 @@ export function fetchCompetitionJudging(id) {
   return apiRequest(`/competitions/${id}/judging/`);
 }
 
+export function fetchCompetitionAnnouncements(id) {
+  return apiRequest(`/competitions/${id}/announcements/`);
+}
+
+export function createCompetitionAnnouncement(id, payload = {}) {
+  return apiRequest(`/competitions/${id}/announcements/`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateCompetitionAnnouncement(id, payload = {}) {
+  return apiRequest(`/competitions/${id}/announcements/`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteCompetitionAnnouncement(id, announcementId) {
+  return apiRequest(`/competitions/${id}/announcements/?id=${encodeURIComponent(announcementId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function addAnnouncementComment(announcementId, payload = {}) {
+  return apiRequest(`/announcements/${announcementId}/comments/`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchCompetitionSubmissions(id) {
   return apiRequest(`/competitions/${id}/submissions/`);
 }
@@ -99,6 +130,13 @@ export function joinCompetition(id, payload = {}) {
   return apiRequest(`/competitions/${id}/join/`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function respondCompetitionInvitation(token, decision) {
+  return apiRequest(`/competition-invitations/${encodeURIComponent(token)}/respond/`, {
+    method: "POST",
+    body: JSON.stringify({ decision }),
   });
 }
 
