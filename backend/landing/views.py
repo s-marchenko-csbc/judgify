@@ -120,6 +120,44 @@ def request_bool(value, default=False):
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def recompute_competition_counters(competition, save=True):
+    participant_count = CompetitionParticipant.objects.filter(
+        competition=competition,
+        status="approved",
+        role__in=["participant", "team_member"],
+    ).count()
+    comments_count = CompetitionAnnouncementComment.objects.filter(
+        announcement__competition=competition,
+    ).count()
+
+    changed = []
+    if competition.participants_count != participant_count:
+        competition.participants_count = participant_count
+        changed.append("participants_count")
+    if competition.comments_count != comments_count:
+        competition.comments_count = comments_count
+        changed.append("comments_count")
+
+    trending_score = (
+        competition.participants_count * 3
+        + competition.views_count
+        + (competition.followers_count * 2)
+        + (competition.comments_count * 0.5)
+    )
+    if competition.trending_score != trending_score:
+        competition.trending_score = trending_score
+        changed.append("trending_score")
+
+    if save and changed:
+        competition.save(update_fields=[*changed, "updated_at"])
+
+    return {
+        "participants_count": participant_count,
+        "comments_count": comments_count,
+        "changed": changed,
+    }
+
+
 def recompute_competition_timing(competition, now=None, save=True):
     """Synchronize status flags with competition and round deadlines.
 
@@ -128,6 +166,7 @@ def recompute_competition_timing(competition, now=None, save=True):
     not during the whole competition window.
     """
     if competition.status in ["draft", "archived"]:
+        counter_state = recompute_competition_counters(competition, save=False)
         changed = []
         if competition.registration_open:
             competition.registration_open = False
@@ -138,8 +177,9 @@ def recompute_competition_timing(competition, now=None, save=True):
         if competition.timer_deadline:
             competition.timer_deadline = None
             changed.append("timer_deadline")
+        changed.extend(counter_state["changed"])
         if save and changed:
-            competition.save(update_fields=[*changed, "updated_at"])
+            competition.save(update_fields=[*dict.fromkeys(changed), "updated_at"])
         return competition
 
     now = now or timezone.now()
@@ -264,13 +304,19 @@ def recompute_competition_timing(competition, now=None, save=True):
     competition.submissions_open = submissions_open
     competition.timer_deadline = timer_deadline
     competition.total_rounds = max(1, len(rounds) or competition.total_rounds)
-    competition.trending_score = (competition.participants_count * 3) + competition.views_count + (competition.followers_count * 2) + (competition.comments_count * 0.5)
+    counter_state = recompute_competition_counters(competition, save=False)
 
     if save:
-        competition.save(update_fields=[
+        update_fields = [
             "status", "registration_open", "submissions_open", "timer_deadline",
             "current_round", "total_rounds", "trending_score", "updated_at",
-        ])
+        ]
+        update_fields.extend(
+            field
+            for field in ["participants_count", "comments_count"]
+            if field in counter_state["changed"]
+        )
+        competition.save(update_fields=list(dict.fromkeys(update_fields)))
         if round_status_updates:
             CompetitionRound.objects.bulk_update(list({round_obj.id: round_obj for round_obj in round_status_updates}.values()), ["status"])
         closed_round_ids = [round_obj.id for round_obj in rounds if round_obj.ends_at and now > round_obj.ends_at]
@@ -396,10 +442,6 @@ def synchronize_competition_integrity(competition, save=True):
         status="approved",
         role__in=["participant", "team_member"],
     )
-    participant_count = approved_participants.count()
-    if competition.participants_count != participant_count:
-        competition.participants_count = participant_count
-        save = True
 
     approved_team_ids = set(
         approved_participants.filter(team__isnull=False).values_list("team_id", flat=True)
@@ -417,9 +459,17 @@ def synchronize_competition_integrity(competition, save=True):
         if team_changed:
             team.save(update_fields=["status", "captain", "updated_at"])
 
+    counter_state = recompute_competition_counters(competition, save=False)
+    if counter_state["changed"]:
+        save = True
+
     if save:
-        competition.save(update_fields=["participants_count", "updated_at"])
-    return {"rounds_changed": changed_round_ids, "participants_count": participant_count}
+        competition.save(update_fields=[*counter_state["changed"], "updated_at"])
+    return {
+        "rounds_changed": changed_round_ids,
+        "participants_count": counter_state["participants_count"],
+        "comments_count": counter_state["comments_count"],
+    }
 
 
 COMMON_COMPROMISED_PASSWORDS = {
@@ -1390,7 +1440,6 @@ class AdminFilterOptionsView(APIView):
 
 class LandingCompetitionsView(APIView):
     permission_classes = [AllowAny]
-    CACHE_TTL_SECONDS = 5
     CARD_QUERY_FIELDS = [
         "id", "slug", "name", "short_description", "cover_image", "status",
         "event_type", "participation_type", "access_mode", "visibility_mode",
@@ -1418,21 +1467,12 @@ class LandingCompetitionsView(APIView):
 
     def get(self, request):
         now = timezone.now()
-        is_anonymous = not request.user.is_authenticated
-        cache_key = None
-        if is_anonymous:
-            cache_key = f"landing:competitions:v3:{request.META.get('QUERY_STRING', '')}"
-            cached_payload = cache.get(cache_key)
-            if cached_payload is not None:
-                return Response(cached_payload)
-
-        # Keep the database status in sync before filtering. This is intentionally
-        # throttled so a busy landing page does not write the same timing fields
-        # on every tab/search refresh.
-        if cache.add("landing:timing-sync:v1", "1", self.CACHE_TTL_SECONDS):
-            base_qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
-            for competition in base_qs[:100]:
-                recompute_competition_timing(competition, now=now, save=True)
+        # Keep status, timers and counters synchronized before filtering. Landing
+        # tabs are time-based, so cached/stale status values make cards appear in
+        # the wrong tab right when timers expire.
+        base_qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
+        for competition in base_qs[:100]:
+            recompute_competition_timing(competition, now=now, save=True)
 
         qs = Competition.objects.filter(is_public=True, show_in_catalog=True).exclude(status="draft")
 
@@ -1521,10 +1561,7 @@ class LandingCompetitionsView(APIView):
                 serializer_context["editable_competition_ids"] = set()
 
         serializer = CompetitionCardSerializer(competitions, many=True, context=serializer_context)
-        payload = list(serializer.data)
-        if cache_key:
-            cache.set(cache_key, payload, self.CACHE_TTL_SECONDS)
-        return Response(payload)
+        return Response(list(serializer.data))
 
 
 class LandingSidebarView(APIView):
@@ -1564,7 +1601,7 @@ class LandingSidebarView(APIView):
         recent_competitions = []
         for record in recent_records:
             if record.competition_id not in seen_competition_ids:
-                recent_competitions.append(record.competition)
+                recent_competitions.append(recompute_competition_timing(record.competition, now=now, save=False))
                 seen_competition_ids.add(record.competition_id)
 
         recent_material_records = (
@@ -1578,7 +1615,10 @@ class LandingSidebarView(APIView):
             .select_related("competition")
             .order_by("-created_at")[:6]
         )
-        saved_competitions = [record.competition for record in saved_records]
+        saved_competitions = [
+            recompute_competition_timing(record.competition, now=now, save=False)
+            for record in saved_records
+        ]
 
         return Response({
             "recently_viewed": SidebarCompetitionSerializer(recent_competitions, many=True).data,
@@ -1779,6 +1819,7 @@ class CompetitionAnnouncementsView(APIView):
         serializer = CompetitionAnnouncementSerializer(data=payload)
         serializer.is_valid(raise_exception=True)
         announcement = serializer.save(author=request.user, competition=competition)
+        recompute_competition_counters(competition, save=True)
         return Response(
             CompetitionAnnouncementSerializer(announcement, context={"request": request}).data,
             status=status.HTTP_201_CREATED,
@@ -1809,6 +1850,7 @@ class CompetitionAnnouncementsView(APIView):
         if not user_can_manage_announcement(request.user, announcement):
             return Response({"detail": "You can delete only your own announcements."}, status=status.HTTP_403_FORBIDDEN)
         announcement.delete()
+        recompute_competition_counters(competition, save=True)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1837,13 +1879,15 @@ class AddAnnouncementCommentView(APIView):
         )
 
         competition = announcement.competition
-        competition.comments_count = CompetitionAnnouncementComment.objects.filter(
-            announcement__competition=competition
-        ).count()
-        competition.save(update_fields=["comments_count"])
+        counter_state = recompute_competition_counters(competition, save=True)
 
         serializer = CompetitionAnnouncementCommentSerializer(comment, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        payload = serializer.data
+        payload["competition_counts"] = {
+            "participants_count": counter_state["participants_count"],
+            "comments_count": counter_state["comments_count"],
+        }
+        return Response(payload, status=status.HTTP_201_CREATED)
 
 
 class CompetitionParticipantsView(APIView):
@@ -1990,12 +2034,7 @@ class JoinCompetitionView(APIView):
             team.status = initial_status
             team.save(update_fields=["status", "updated_at"])
 
-        competition.participants_count = CompetitionParticipant.objects.filter(
-            competition=competition,
-            status="approved",
-            role__in=["participant", "team_member"],
-        ).count()
-        competition.save(update_fields=["participants_count"])
+        recompute_competition_counters(competition, save=True)
         synchronize_competition_integrity(competition, save=True)
 
         serializer = CompetitionJoinRequestSerializer(join_request)
@@ -2048,12 +2087,7 @@ class CompetitionJoinRequestReviewView(APIView):
             join_request.team.status = decision
             join_request.team.save(update_fields=["status", "updated_at"])
 
-        competition.participants_count = CompetitionParticipant.objects.filter(
-            competition=competition,
-            status="approved",
-            role__in=["participant", "team_member"],
-        ).count()
-        competition.save(update_fields=["participants_count"])
+        recompute_competition_counters(competition, save=True)
         synchronize_competition_integrity(competition, save=True)
 
         return Response({
@@ -3767,12 +3801,7 @@ class CompetitionInvitationResponseView(APIView):
                 "reviewed_at": timezone.now() if status_value == "approved" else None,
             },
         )
-        competition.participants_count = CompetitionParticipant.objects.filter(
-            competition=competition,
-            status="approved",
-            role__in=["participant", "team_member"],
-        ).count()
-        competition.save(update_fields=["participants_count"])
+        recompute_competition_counters(competition, save=True)
         synchronize_competition_integrity(competition, save=True)
         return Response({
             "invitation": CompetitionInvitationSerializer(invitation).data,

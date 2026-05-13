@@ -1687,7 +1687,7 @@ class Command(BaseCommand):
                 status="approved",
                 role__in=["participant", "team_member"],
             ).count()
-            comp.comments_count = max(comp.comments_count, actual_comments)
+            comp.comments_count = actual_comments
             comp.views_count = max(comp.views_count, comp.participants_count * 30 + comp.followers_count)
             comp.trending_score = (
                 comp.participants_count * 3

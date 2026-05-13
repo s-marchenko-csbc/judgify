@@ -80,9 +80,11 @@ function deriveTimedCompetition(item, now) {
     && (!judgingEndsAt || now <= judgingEndsAt);
   let status = item.status || "upcoming";
 
+  const competitionWindowFinished = Boolean(endsAt && now > endsAt);
+
   if (resultsPublished) {
     status = "finished";
-  } else if (judgingOpen) {
+  } else if (judgingOpen && (competitionWindowFinished || item.status === "judging")) {
     status = "judging";
   } else if (startsAt && now < startsAt) {
     status = registrationOpen ? "registration_open" : "upcoming";
@@ -335,45 +337,58 @@ export default function LandingPage() {
     let cancelled = false;
     const requestAuthKey = authSessionKey;
 
+    const applyAnonymousSidebar = (data) => {
+      if (cancelled || requestAuthKey !== authSessionKey) return;
+      setSidebarData({
+        ...(data || {}),
+        saved_competitions: [],
+      });
+    };
+
+    const applyAuthenticatedSidebar = (data, savedRecords) => {
+      if (cancelled || requestAuthKey !== authSessionKey) return;
+      const savedList = (data?.saved_competitions || []).slice(0, 6);
+      const nextSavedIds = new Set(
+        (savedRecords || [])
+          .map((record) => record?.competition?.id)
+          .filter(Boolean)
+      );
+      setSidebarData({
+        ...data,
+        saved_competitions: savedList.map((item) => ({ ...item, is_saved: true })),
+      });
+      setSavedIds(nextSavedIds);
+    };
+
     if (!isAuthenticated) {
       setSidebarData(null);
       setSavedIds(new Set());
       setCompetitions((prev) => mergeSavedState(prev, new Set(), { isAuthenticated: false }));
-      fetchSidebar()
-        .then((data) => {
-          if (cancelled || requestAuthKey !== authSessionKey) return;
-          setSidebarData({
-            ...(data || {}),
-            saved_competitions: [],
-          });
-        })
-        .catch(console.error);
+      const loadAnonymousSidebar = () => fetchSidebar().then(applyAnonymousSidebar).catch(console.error);
+      loadAnonymousSidebar();
+      const intervalId = window.setInterval(() => {
+        if (document.visibilityState === "visible") loadAnonymousSidebar();
+      }, 15000);
       return () => {
         cancelled = true;
+        window.clearInterval(intervalId);
       };
     }
 
     setSidebarData(null);
     setSavedIds(new Set());
     setCompetitions((prev) => mergeSavedState(prev, new Set(), { isAuthenticated: false }));
-    Promise.all([fetchSidebar(), fetchSavedCompetitions()])
-      .then(([data, savedRecords]) => {
-        if (cancelled || requestAuthKey !== authSessionKey) return;
-        const savedList = (data?.saved_competitions || []).slice(0, 6);
-        const nextSavedIds = new Set(
-          (savedRecords || [])
-            .map((record) => record?.competition?.id)
-            .filter(Boolean)
-        );
-        setSidebarData({
-          ...data,
-          saved_competitions: savedList.map((item) => ({ ...item, is_saved: true })),
-        });
-        setSavedIds(nextSavedIds);
-      })
-      .catch(console.error);
+    const loadAuthenticatedSidebar = () =>
+      Promise.all([fetchSidebar(), fetchSavedCompetitions()])
+        .then(([data, savedRecords]) => applyAuthenticatedSidebar(data, savedRecords))
+        .catch(console.error);
+    loadAuthenticatedSidebar();
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") loadAuthenticatedSidebar();
+    }, 15000);
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, [authSessionKey, isAuthenticated]);
 

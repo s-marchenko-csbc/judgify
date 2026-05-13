@@ -116,11 +116,7 @@ function CompetitionCard({ item, onSavedChange, now = Date.now() }) {
   }, [roundState.deadline, now]);
 
   const isTimerExpired = remainingMs !== null && remainingMs <= 0;
-
-  const uiStatus =
-    roundState.status === "active" && isTimerExpired
-      ? "finished"
-      : roundState.status;
+  const uiStatus = roundState.status;
 
   const hasUserParticipation = ["approved", "pending"].includes(item.user_participation_status);
   const participationHint = item.user_participation_status === "pending" ? t("card.pendingReview") : "";

@@ -591,7 +591,16 @@ class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
     def get_can_comment(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
-        return bool(user and user.is_authenticated and obj.competition.is_public)
+        if not user or not user.is_authenticated:
+            return False
+        if obj.competition.is_public or user.is_staff or user.is_superuser:
+            return True
+        return CompetitionParticipant.objects.filter(
+            competition=obj.competition,
+            user=user,
+            role="organizer",
+            status="approved",
+        ).exists()
 
 
 class TeamMemberSerializer(serializers.ModelSerializer):

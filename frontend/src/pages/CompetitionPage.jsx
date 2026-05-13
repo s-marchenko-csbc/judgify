@@ -58,12 +58,12 @@ function formatDateRange(baseCompetition, language, t) {
   return `${format(startDate)} - ${format(endDate)}`;
 }
 
-function formatUpcomingCountdown(timerDeadline, t) {
+function formatUpcomingCountdown(timerDeadline, t, now = Date.now()) {
   if (!timerDeadline) {
     return t("competitionPage.timerUnavailable");
   }
 
-  const diff = new Date(timerDeadline).getTime() - Date.now();
+  const diff = new Date(timerDeadline).getTime() - now;
   const safe = Math.max(diff, 0);
 
   const totalSeconds = Math.floor(safe / 1000);
@@ -74,7 +74,7 @@ function formatUpcomingCountdown(timerDeadline, t) {
   return `${hours}:${minutes}:${seconds}`;
 }
 
-function enrichCompetition(baseCompetition, language, t) {
+function enrichCompetition(baseCompetition, language, t, now = Date.now()) {
   const currentRound = baseCompetition?.current_round || 0;
   const totalRounds = baseCompetition?.total_rounds || 0;
   const nextRound = totalRounds ? Math.min(currentRound + 1, totalRounds) : 0;
@@ -91,8 +91,8 @@ function enrichCompetition(baseCompetition, language, t) {
     datesLabel: formatDateRange(baseCompetition, language, t),
     sidebarDescription: baseCompetition?.short_description || t("competitionPage.descriptionFallback"),
     upcomingText: nextRound
-      ? t("competitionPage.roundTimer", { round: nextRound, time: formatUpcomingCountdown(baseCompetition?.timer_deadline, t) })
-      : t("competitionPage.timer", { time: formatUpcomingCountdown(baseCompetition?.timer_deadline, t) }),
+      ? t("competitionPage.roundTimer", { round: nextRound, time: formatUpcomingCountdown(baseCompetition?.timer_deadline, t, now) })
+      : t("competitionPage.timer", { time: formatUpcomingCountdown(baseCompetition?.timer_deadline, t, now) }),
     materials: baseCompetition?.materials || [],
     announcements: baseCompetition?.announcements || [],
     participants: baseCompetition?.participants || [],
@@ -276,6 +276,14 @@ export default function CompetitionPage() {
   }, [authSessionKey, id, location.state, language, t]);
 
   useEffect(() => {
+    const timerId = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      setCompetition((prev) => (prev ? enrichCompetition(prev, language, t) : prev));
+    }, 1000);
+    return () => window.clearInterval(timerId);
+  }, [language, t]);
+
+  useEffect(() => {
     if (!competition?.id) return;
     let isMounted = true;
 
@@ -434,8 +442,15 @@ export default function CompetitionPage() {
   };
 
   const handleAnnouncementDelete = async (announcementId) => {
+    const removedCommentCount = (competition?.announcements || []).find((item) => item.id === announcementId)?.comments?.length || 0;
     await deleteCompetitionAnnouncement(id, announcementId);
     patchAnnouncements((items) => items.filter((item) => item.id !== announcementId));
+    if (removedCommentCount) {
+      setCompetition((prev) => prev ? {
+        ...prev,
+        comments_count: Math.max(0, (prev.comments_count || 0) - removedCommentCount),
+      } : prev);
+    }
   };
 
   const handleCommentPost = async (announcementId, textValue) => {
@@ -443,6 +458,7 @@ export default function CompetitionPage() {
     if (!text) return;
 
     const comment = await addAnnouncementComment(announcementId, { text });
+    const counts = comment?.competition_counts || {};
     patchAnnouncements((items) =>
       items.map((announcement) =>
         announcement.id === announcementId
@@ -450,6 +466,11 @@ export default function CompetitionPage() {
           : announcement
       )
     );
+    setCompetition((prev) => prev ? {
+      ...prev,
+      comments_count: counts.comments_count ?? ((prev.comments_count || 0) + 1),
+      participants_count: counts.participants_count ?? prev.participants_count,
+    } : prev);
     return comment;
   };
 
