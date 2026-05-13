@@ -1,4 +1,3 @@
-version: '3.9'
 services:
   db:
     image: postgres:16
@@ -18,25 +17,32 @@ services:
 
   backend:
     build: ./backend
-    command: bash /app/start.sh
     volumes:
       - ./backend:/app
     ports:
       - "8000:8000"
-    env_file:
-      - ./backend/.env.docker
+    environment:
+      IN_DOCKER: "1"
+      DEBUG: "${DEBUG:-1}"
+      SECRET_KEY: "${SECRET_KEY:-local-docker-secret-key-change-me}"
+      ALLOWED_HOSTS: "${ALLOWED_HOSTS:-127.0.0.1,localhost,backend}"
+      DB_NAME: "${DB_NAME:-judgify}"
+      DB_USER: "${DB_USER:-postgres}"
+      DB_PASSWORD: "${DB_PASSWORD:-postgres}"
+      DB_HOST: "${DB_HOST:-db}"
+      DB_PORT: "${DB_PORT:-5432}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-http://localhost:5173}"
+      CSRF_TRUSTED_ORIGINS: "${CSRF_TRUSTED_ORIGINS:-http://localhost:5173}"
+      SEED_DEMO_DATA: "${SEED_DEMO_DATA:-1}"
+      SECURE_SSL_REDIRECT: "${SECURE_SSL_REDIRECT:-0}"
     depends_on:
       db:
         condition: service_healthy
 
   frontend:
     build: ./frontend
-    command: npm run dev -- --host 0.0.0.0
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     ports:
-      - "5173:5173"
+      - "5173:80"
     depends_on:
       - backend
 

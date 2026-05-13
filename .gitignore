@@ -9,5 +9,8 @@ dist/
 .npm-cache/
 staticfiles/
 .env
+.env.*
+!.env.example
+!.env.*.example
 .DS_Store
 postgres_data/

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -n "${DB_HOST:-}" ]]; then
 python - <<'PY'
 import os, socket, time
 host = os.getenv('DB_HOST', 'db')
@@ -16,13 +17,16 @@ for attempt in range(60):
 else:
     raise SystemExit("Database did not become reachable")
 PY
+fi
 
 python manage.py migrate
-python manage.py seed_landing
-python manage.py shell <<'PY'
-from django.contrib.auth import get_user_model
-User = get_user_model()
-if not User.objects.filter(username='admin').exists():
-    User.objects.create_superuser('admin', 'admin@example.com', 'admin12345')
-PY
-python manage.py runserver 0.0.0.0:8000
+
+if [[ "${SEED_DEMO_DATA:-0}" == "1" ]]; then
+    python manage.py seed_landing_if_empty
+fi
+
+if [[ "${DJANGO_CREATE_SUPERUSER:-0}" == "1" ]]; then
+    python manage.py createsuperuser --noinput
+fi
+
+exec gunicorn config.wsgi:application --bind "0.0.0.0:${PORT:-8000}"

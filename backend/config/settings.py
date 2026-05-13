@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -11,8 +12,16 @@ IN_DOCKER = os.getenv('IN_DOCKER') == '1' or Path('/.dockerenv').exists()
 if os.getenv('RENDER') != 'true' and IN_DOCKER:
     load_dotenv(BASE_DIR / '.env.docker')
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key')
 DEBUG = os.getenv('DEBUG', '1') == '1'
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = 'local-dev-secret-key-change-me'
+    else:
+        raise ImproperlyConfigured('SECRET_KEY must be set when DEBUG=0.')
+if not DEBUG and SECRET_KEY in {'dev-secret-key', 'local-dev-secret-key-change-me'}:
+    raise ImproperlyConfigured('SECRET_KEY must be a unique production secret when DEBUG=0.')
+
 ALLOWED_HOSTS = [
     h.strip()
     for h in os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
@@ -129,6 +138,8 @@ STORAGES = {
     },
 }
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
 
 CORS_ALLOWED_ORIGINS = [
     x.strip()
@@ -152,7 +163,12 @@ REST_FRAMEWORK = {
 
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', '1') == '1'
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SAMESITE = 'None'
     CSRF_COOKIE_SAMESITE = 'None'
+    SECURE_REFERRER_POLICY = 'same-origin'
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '31536000'))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS', '1') == '1'
+    SECURE_HSTS_PRELOAD = os.getenv('SECURE_HSTS_PRELOAD', '1') == '1'

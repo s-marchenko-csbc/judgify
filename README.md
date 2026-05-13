@@ -1,153 +1,119 @@
-# Judgify Landing Demo
+# Judgify
 
-## Project change notes
+Judgify is a tournament and competition platform with a Django REST API and a React/Vite frontend.
 
-Current package version: `v16`.
+## Stack
 
-Version history is maintained in [`CHANGELOG.md`](CHANGELOG.md). Update it together with every project archive so model, API, UI and workflow changes do not get lost between iterations.
+- Backend: Django, Django REST Framework, PostgreSQL, Gunicorn, WhiteNoise
+- Frontend: React, Vite
+- Deployment: Render Blueprint (`render.yaml`)
+- Local orchestration: Docker Compose
 
+## Repository Layout
 
-Демо-проєкт лендінгу платформи змагань на стеку:
-- React (Vite)
-- Django + Django REST Framework
-- PostgreSQL
+- `backend/` - Django API, data model, migrations, management commands
+- `frontend/` - React application
+- `render.yaml` - Render services and database blueprint
+- `docker-compose.yml` - local development stack
 
-## Структура
+## Configuration
 
-- `backend/` — Django API
-- `frontend/` — React UI
+Copy the example env files before running locally:
 
-## 1. Швидкий запуск через Docker
+```bash
+cp backend/.env.example backend/.env
+cp backend/.env.docker.example backend/.env.docker
+```
 
-У корені проєкту:
+Production must set a unique `SECRET_KEY` and run with `DEBUG=0`. The application refuses to start in production with the local development secret.
+
+Important backend variables:
+
+```env
+DEBUG=0
+SECRET_KEY=<unique-production-secret>
+DATABASE_URL=<postgres-connection-string>
+ALLOWED_HOSTS=olympiad-api.onrender.com
+CORS_ALLOWED_ORIGINS=https://olympiad-landing.onrender.com
+CSRF_TRUSTED_ORIGINS=https://olympiad-landing.onrender.com
+SEED_DEMO_DATA=1
+SECURE_SSL_REDIRECT=1
+```
+
+Frontend production builds use:
+
+```env
+VITE_API_BASE_URL=https://olympiad-api.onrender.com/api
+```
+
+## Local Development
+
+Run the full stack:
 
 ```bash
 docker compose up --build
 ```
 
-Після запуску:
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:8000/api/landing/competitions/
-- Django admin: http://localhost:8000/admin/
+Local URLs:
 
-## 2. Demo-користувач
+- Frontend: `http://localhost:5173`
+- API health: `http://localhost:8000/api/health/`
+- Landing API: `http://localhost:8000/api/landing/competitions/`
+- Django admin: `http://localhost:8000/admin/`
 
-Після першого старту автоматично створюється:
-- username: `demo_user`
-- password: `demo12345`
+The Docker backend runs migrations on startup. Demo data is seeded only when `SEED_DEMO_DATA=1`, using the idempotent `seed_landing_if_empty` command.
 
-Суперкористувач за замовчуванням:
-- username: `admin`
-- password: `admin12345`
-
-## 3. Локальний запуск без Docker
-
-### Backend
+## Manual Backend Setup
 
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate   # Linux / macOS
-# .venv\Scripts\activate   # Windows
+source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-python manage.py makemigrations landing
 python manage.py migrate
-python manage.py seed_landing
+python manage.py seed_landing_if_empty
 python manage.py runserver
 ```
 
-### Frontend
+On Windows, activate the virtual environment with:
+
+```powershell
+.venv\Scripts\activate
+```
+
+## Manual Frontend Setup
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-## 4. Налаштування БД
+## Data Integrity
 
-За замовчуванням проєкт очікує PostgreSQL. Для Docker все вже налаштовано.
-
-Для локального запуску створіть БД і пропишіть змінні в `backend/.env`:
-
-```env
-DEBUG=1
-SECRET_KEY=dev-secret-key
-ALLOWED_HOSTS=127.0.0.1,localhost
-DB_NAME=judgify
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_HOST=127.0.0.1
-DB_PORT=5432
-CORS_ALLOWED_ORIGINS=http://localhost:5173
-```
-
-## 5. Основні API
-
-- `GET /api/landing/filters/`
-- `GET /api/landing/competitions/`
-- `GET /api/landing/sidebar/`
-
-## 6. Фільтрація
-
-`GET /api/landing/competitions/?tab=trending&status=active&participation_type=team&industry=programming`
-
-Підтримуються параметри:
-- `search`
-- `tab`
-- `status`
-- `event_type`
-- `participation_type`
-- `industry`
-- `difficulty`
-
-## 7. Що віддає БД для UI
-
-### Центральні картки
-- назва
-- фонове зображення змагання
-- поточний раунд / загальна кількість раундів
-- кількість учасників
-- competition status
-- таймер до `timer_deadline`
-- прапори `submissions_open`, `is_live_stream_enabled`, `is_saved`
-
-### Права панель
-- до 6 останніх змагань у форматі вузьких банерів
-- збережені змагання користувача
-- картинка, кількість учасників, кількість коментарів, статус
-
-## 8. UI-особливості в оновленому архіві
-
-- таймер на картці показує залишок до `timer_deadline`
-- фон таймера — напівпрозорий сірий
-- якщо лишається менше 5 хвилин, текст таймера стає червоним
-- статус змагання має колір:
-  - `active` → зелений (`Online`)
-  - `finished` → червоний
-  - `judging` → фіолетовий
-  - `archived` → сірий
-  - `registration_open` → оранжевий
-  - `upcoming` → синій
-- `Last Competitions` показується як вертикальний список вузьких банерів
-
-## 9. Подальші кроки
-
-- auth/me
-- save/unsave
-- watch list
-- websocket live timer
-- детальна сторінка турніру
-- пагінація
-
-### Live streams and realtime demo rounds
-
-A stream is configured per round, not only per competition. For a real integrated player, use the provider's iframe/embed URL in `stream_embed_url` and keep the public watch URL in `stream_url`. If only `stream_url` is filled, the competition page shows an external link instead of an iframe. This is enough for YouTube/Vimeo/Twitch-style streams when the provider allows embedding; direct HLS/WebRTC integration would need a dedicated player component.
-
-After pulling this version run:
+Validate demo data consistency after seed changes:
 
 ```bash
-docker compose exec backend python manage.py migrate
-docker compose exec backend python manage.py seed_landing
+cd backend
+python manage.py validate_demo_integrity --warnings-as-errors
 ```
+
+This checks competition states, rounds, participants, teams, submissions, judging assignments, scores, invitations, outbound messages, and stored files.
+
+## Deployment
+
+Render uses the Blueprint in `render.yaml`:
+
+- `olympiad-db` PostgreSQL database
+- `olympiad-api` Django/Gunicorn web service
+- `olympiad-landing` static Vite build
+
+The backend start command is `bash ./start.sh`, which runs migrations, optionally seeds demo data, and starts Gunicorn.
+
+## Production Notes
+
+- Do not commit `.env`, `.env.*`, local databases, caches, `node_modules`, or build artifacts.
+- Do not create default admin users in startup scripts.
+- Use `createsuperuser` or a secure one-off job for administrative accounts.
+- Use `seed_landing_if_empty` for non-destructive demo data top-ups.
