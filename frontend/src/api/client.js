@@ -47,12 +47,28 @@ async function readPayload(response) {
 
 function getErrorMessage(response, payload) {
   let message = `Request failed: ${response.status}`;
+  const stringifyError = (value) => {
+    if (Array.isArray(value)) {
+      return value.map(stringifyError).filter(Boolean).join(", ");
+    }
+    if (typeof value === "object" && value) {
+      return Object.entries(value)
+        .map(([key, nestedValue]) => `${key}: ${stringifyError(nestedValue)}`)
+        .filter(Boolean)
+        .join("; ");
+    }
+    return value === null || value === undefined ? "" : String(value);
+  };
   if (typeof payload === "object" && payload) {
     if (payload.detail) {
-      message = payload.detail;
+      message = stringifyError(payload.detail);
+      if (payload.errors) {
+        const nested = stringifyError(payload.errors);
+        if (nested) message = `${message}: ${nested}`;
+      }
     } else {
       const fieldErrors = Object.entries(payload)
-        .map(([field, value]) => `${field}: ${Array.isArray(value) ? value.join(", ") : JSON.stringify(value)}`)
+        .map(([field, value]) => `${field}: ${stringifyError(value)}`)
         .join("; ");
       if (fieldErrors) message = fieldErrors;
     }

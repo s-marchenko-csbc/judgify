@@ -3492,6 +3492,8 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   box-shadow: 0 24px 50px rgba(10, 11, 36, 0.18);
   z-index: 1000;
   color: #1f3356;
+  max-height: min(720px, calc(100vh - 24px));
+  overflow: auto;
 }
 
 .account-menu-current {
@@ -3604,6 +3606,41 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   color: #395886;
   font-style: normal;
   font-weight: 900;
+}
+
+.account-notification-list {
+  display: grid;
+  gap: 6px;
+}
+
+.account-notification-list > small {
+  display: block;
+  padding: 6px 8px;
+  color: #6b7d95;
+}
+
+.account-notification-row {
+  width: 100%;
+  border: 0;
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #1f3356;
+  cursor: pointer;
+  text-align: left;
+}
+
+.account-notification-row strong,
+.account-notification-row span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-notification-row span {
+  color: #6b7d95;
+  font-size: 12px;
 }
 
 .account-logout-btn {

@@ -178,6 +178,15 @@ const dictionaries = {
       signOut: "Sign out",
       accountMenu: "Account menu",
     },
+    notifications: {
+      score: "Work scored",
+      submission: "New or updated submission",
+      joinRequestPending: "Pending application",
+      competitionApproval: "Competition approval pending",
+      judgeAssignment: "Judge assignment",
+      joinRequest: "Application status updated",
+      message: "Message",
+    },
       admin: {
         title: "Admin panel",
         subtitle: "Manage accounts, competitions, landing filters and server performance.",
@@ -896,6 +905,15 @@ const dictionaries = {
       switchAccount: "Змінити обліковий запис",
       signOut: "Вийти",
       accountMenu: "Меню облікового запису",
+    },
+    notifications: {
+      score: "Роботу оцінено",
+      submission: "Нове або оновлене подання",
+      joinRequestPending: "Заявка очікує розгляду",
+      competitionApproval: "Змагання очікує схвалення",
+      judgeAssignment: "Призначення суддею",
+      joinRequest: "Статус заявки оновлено",
+      message: "Повідомлення",
     },
     admin: {
       title: "Адмін-панель",

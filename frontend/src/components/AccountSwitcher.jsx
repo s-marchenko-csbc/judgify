@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
+import { fetchProfileDashboard } from "../api/profileApi";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 
@@ -69,9 +70,21 @@ function Avatar({ user, t, className = "account-avatar" }) {
   return <span className={className}>{initials(user, t)}</span>;
 }
 
-function AccountMenu({ user, canAdmin, onAdmin, onProfile, onSwitchAccount, onLogout, style, menuRef, t }) {
+function AccountMenu({ user, canAdmin, notifications = [], onAdmin, onProfile, onSwitchAccount, onLogout, style, menuRef, t }) {
   const switchableAccounts = uniqueAccounts([...(user ? [user] : []), ...demoAccounts]);
   const roleLabel = (role) => t(`roles.${role || "participant"}`, { defaultValue: role || "participant" });
+  const notificationTitle = (item) => {
+    const labels = {
+      score: t("notifications.score", { defaultValue: "Work scored" }),
+      submission: t("notifications.submission", { defaultValue: "New or updated submission" }),
+      join_request_pending: t("notifications.joinRequestPending", { defaultValue: "Pending application" }),
+      competition_creation_request: t("notifications.competitionApproval", { defaultValue: "Competition approval pending" }),
+      judge_assignment: t("notifications.judgeAssignment", { defaultValue: "Judge assignment" }),
+      join_request: t("notifications.joinRequest", { defaultValue: "Application status updated" }),
+      message: t("notifications.message", { defaultValue: "Message" }),
+    };
+    return labels[item.type] || item.title;
+  };
 
   return (
     <div className="account-menu account-menu-portal" style={style} ref={menuRef}>
@@ -92,6 +105,24 @@ function AccountMenu({ user, canAdmin, onAdmin, onProfile, onSwitchAccount, onLo
           {t("account.adminPanel", { defaultValue: "Admin panel" })}
         </button>
       )}
+
+      <div className="account-menu-divider" />
+      <span className="account-menu-caption">{t("profile.latestNotifications", { defaultValue: "Latest notifications" })}</span>
+      <div className="account-notification-list">
+        {notifications.length === 0 ? (
+          <small>{t("profile.noNotifications", { defaultValue: "No account notifications yet." })}</small>
+        ) : notifications.slice(0, 3).map((item) => (
+          <button
+            type="button"
+            className="account-notification-row"
+            key={item.id}
+            onClick={() => item.competition_id && window.location.assign(`/competitions/${item.competition_id}`)}
+          >
+            <strong>{notificationTitle(item)}</strong>
+            <span>{item.competition_name || item.text || item.status}</span>
+          </button>
+        ))}
+      </div>
 
       <div className="account-menu-divider" />
       <span className="account-menu-caption">{t("account.switchAccount")}</span>
@@ -138,6 +169,7 @@ export default function AccountSwitcher({ compact = false }) {
   const { user, login, logout } = useAuth();
   const { t } = useLanguage();
   const [open, setOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
   const [menuStyle, setMenuStyle] = useState({});
   const triggerRef = useRef(null);
   const menuRef = useRef(null);
@@ -178,6 +210,22 @@ export default function AccountSwitcher({ compact = false }) {
       window.removeEventListener("scroll", handleLayout, true);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !user) {
+      setNotifications([]);
+      return undefined;
+    }
+    let cancelled = false;
+    fetchProfileDashboard()
+      .then((dashboard) => {
+        if (!cancelled) setNotifications(dashboard?.notifications || []);
+      })
+      .catch(() => {
+        if (!cancelled) setNotifications([]);
+      });
+    return () => { cancelled = true; };
+  }, [open, user?.id, user?.accountKey]);
 
   const switchAccount = async (account) => {
     if (!String(account.accountKey || "").startsWith("demo:")) {
@@ -220,6 +268,7 @@ export default function AccountSwitcher({ compact = false }) {
         <AccountMenu
           user={user}
           canAdmin={canAdmin}
+          notifications={notifications}
           style={menuStyle}
           menuRef={menuRef}
           onAdmin={handleAdmin}

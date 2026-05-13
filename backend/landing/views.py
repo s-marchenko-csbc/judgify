@@ -199,14 +199,16 @@ def recompute_competition_timing(competition, now=None, save=True):
 
     if results_published:
         status_value = "finished"
-    elif judging_is_open:
-        status_value = "judging"
     elif active_round:
         status_value = "active"
+    elif judging_is_open and all_rounds_finished:
+        status_value = "judging"
     elif rounds and first_round_start and now < first_round_start:
         status_value = "registration_open" if registration_open else "upcoming"
     elif rounds and all_rounds_finished:
-        status_value = "finished"
+        status_value = "judging" if judging_is_open else "finished"
+    elif judging_is_open and not rounds:
+        status_value = "judging"
     elif rounds and (any_round_started or (competition.starts_at and now >= competition.starts_at)):
         status_value = "active"
     elif competition.starts_at and now < competition.starts_at:
@@ -331,11 +333,18 @@ def user_has_active_team_conflict(user, competition, team=None):
 def user_is_competition_judge(user, competition):
     if not user or not user.is_authenticated:
         return False
-    return CompetitionParticipant.objects.filter(
+    if CompetitionParticipant.objects.filter(
         competition=competition,
         user=user,
         role="judge",
         status__in=["pending", "approved"],
+    ).exists():
+        return True
+    return CompetitionJudgeAssignment.objects.filter(
+        competition=competition,
+        judge=user,
+        assignment_type="manual",
+        status__in=["invited", "accepted", "completed"],
     ).exists()
 
 
@@ -348,6 +357,69 @@ def user_has_participation_for_judge_conflict(user, competition):
         role__in=["participant", "team_member"],
         status__in=["pending", "approved"],
     ).exists()
+
+
+def synchronize_competition_integrity(competition, save=True):
+    now = timezone.now()
+    rounds = list(competition.rounds.all().order_by("sort_order", "id"))
+    changed_round_ids = []
+    for index, round_obj in enumerate(rounds):
+        next_status = round_obj.status
+        if competition.status in ["draft", "archived"]:
+            next_status = "draft" if competition.status == "draft" else "judged"
+        elif round_obj.starts_at and now < round_obj.starts_at:
+            next_status = "scheduled"
+        elif round_obj.ends_at and now > round_obj.ends_at:
+            next_status = "judged" if competition.status in ["finished", "archived"] else "closed"
+        elif round_obj.starts_at and now >= round_obj.starts_at:
+            next_status = "active"
+        if next_status != round_obj.status or round_obj.sort_order != index:
+            round_obj.status = next_status
+            round_obj.sort_order = index
+            round_obj.save(update_fields=["status", "sort_order"])
+            changed_round_ids.append(round_obj.id)
+
+    expired_rounds = [
+        round_obj.id
+        for round_obj in rounds
+        if round_obj.ends_at and now > round_obj.ends_at
+    ]
+    if expired_rounds:
+        CompetitionSubmission.objects.filter(
+            competition=competition,
+            round_id__in=expired_rounds,
+            status__in=["created", "validated", "accepted"],
+        ).update(status="locked", locked_at=now)
+
+    approved_participants = CompetitionParticipant.objects.filter(
+        competition=competition,
+        status="approved",
+        role__in=["participant", "team_member"],
+    )
+    participant_count = approved_participants.count()
+    if competition.participants_count != participant_count:
+        competition.participants_count = participant_count
+        save = True
+
+    approved_team_ids = set(
+        approved_participants.filter(team__isnull=False).values_list("team_id", flat=True)
+    )
+    for team in competition.teams.all():
+        next_status = "approved" if team.id in approved_team_ids else team.status
+        team_changed = False
+        if team.captain_id and not team.members.filter(user_id=team.captain_id, status__in=["pending", "approved"]).exists():
+            next_captain = team.members.filter(status__in=["pending", "approved"], user__isnull=False).order_by("joined_at").first()
+            team.captain = next_captain.user if next_captain else None
+            team_changed = True
+        if next_status != team.status:
+            team.status = next_status
+            team_changed = True
+        if team_changed:
+            team.save(update_fields=["status", "captain", "updated_at"])
+
+    if save:
+        competition.save(update_fields=["participants_count", "updated_at"])
+    return {"rounds_changed": changed_round_ids, "participants_count": participant_count}
 
 
 COMMON_COMPROMISED_PASSWORDS = {
@@ -1539,6 +1611,7 @@ class CompetitionDetailView(APIView):
             is_public=True,
         )
         recompute_competition_timing(competition, save=True)
+        synchronize_competition_integrity(competition, save=True)
 
         if request.user.is_authenticated:
             viewed, created = RecentlyViewedCompetition.objects.get_or_create(
@@ -1923,6 +1996,7 @@ class JoinCompetitionView(APIView):
             role__in=["participant", "team_member"],
         ).count()
         competition.save(update_fields=["participants_count"])
+        synchronize_competition_integrity(competition, save=True)
 
         serializer = CompetitionJoinRequestSerializer(join_request)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -1980,6 +2054,7 @@ class CompetitionJoinRequestReviewView(APIView):
             role__in=["participant", "team_member"],
         ).count()
         competition.save(update_fields=["participants_count"])
+        synchronize_competition_integrity(competition, save=True)
 
         return Response({
             "request": CompetitionJoinRequestSerializer(join_request).data,
@@ -2677,6 +2752,7 @@ class CompetitionResultsView(APIView):
             is_public=True,
         )
         recompute_competition_timing(competition, save=True)
+        synchronize_competition_integrity(competition, save=True)
 
         if not user_can_view_results(request.user, competition):
             return Response(
@@ -2887,6 +2963,73 @@ class ProfileDashboardView(APIView):
                 "status": assignment.status,
                 "created_at": assignment.updated_at,
             })
+        member_ids = list(memberships.filter(
+            status="approved",
+            role__in=["participant", "team_member"],
+        ).values_list("id", flat=True))
+        team_ids = list(memberships.filter(
+            status="approved",
+            team__isnull=False,
+        ).values_list("team_id", flat=True))
+        scored_work = CompetitionScore.objects.filter(
+            Q(subject_participant_id__in=member_ids) | Q(subject_team_id__in=team_ids),
+            competition__is_public=True,
+        ).exclude(judge=user).select_related("competition", "round", "criterion", "judge").order_by("-updated_at")[:8]
+        for score in scored_work:
+            notifications.append({
+                "id": f"score-{score.id}",
+                "type": "score",
+                "title": "Work scored",
+                "text": f"{score.round.title}: {score.criterion.title} - {score.score}",
+                "competition_id": score.competition_id,
+                "competition_name": score.competition.name,
+                "status": "judged" if score.is_final else "accepted",
+                "created_at": score.updated_at,
+            })
+        if role == "organizer":
+            organizer_ids = list(organizer_base.values_list("id", flat=True))
+            for request_item in CompetitionJoinRequest.objects.filter(
+                competition_id__in=organizer_ids,
+                status="pending",
+            ).select_related("competition", "user").order_by("-created_at")[:8]:
+                notifications.append({
+                    "id": f"organizer-request-{request_item.id}",
+                    "type": "join_request_pending",
+                    "title": "Pending application",
+                    "text": request_item.user.get_full_name() or request_item.user.get_username() or request_item.user.email,
+                    "competition_id": request_item.competition_id,
+                    "competition_name": request_item.competition.name,
+                    "status": request_item.status,
+                    "created_at": request_item.created_at,
+                })
+            for submission in CompetitionSubmission.objects.filter(
+                competition_id__in=organizer_ids,
+            ).select_related("competition", "round", "participant", "team").order_by("-updated_at")[:8]:
+                subject = submission.team.name if submission.team else (submission.participant.display_name if submission.participant else submission.title)
+                notifications.append({
+                    "id": f"submission-{submission.id}",
+                    "type": "submission",
+                    "title": "New or updated submission",
+                    "text": f"{submission.round.title}: {subject}",
+                    "competition_id": submission.competition_id,
+                    "competition_name": submission.competition.name,
+                    "status": submission.status,
+                    "created_at": submission.updated_at,
+                })
+        if role == "admin" or user.is_staff:
+            for competition_item in Competition.objects.filter(
+                organizer_approval_status="pending",
+            ).exclude(status="archived").order_by("-updated_at")[:8]:
+                notifications.append({
+                    "id": f"admin-competition-{competition_item.id}",
+                    "type": "competition_creation_request",
+                    "title": "Competition approval pending",
+                    "text": competition_item.short_description or competition_item.name,
+                    "competition_id": competition_item.id,
+                    "competition_name": competition_item.name,
+                    "status": competition_item.organizer_approval_status,
+                    "created_at": competition_item.updated_at,
+                })
         notifications = sorted(notifications, key=lambda item: item["created_at"] or timezone.now(), reverse=True)[:10]
 
         own_comments = [
@@ -3185,6 +3328,7 @@ class CompetitionBuilderDetailView(APIView):
             competition = serializer.save()
             ensure_organizer_membership(request.user, competition)
             recompute_competition_timing(competition, save=True)
+            synchronize_competition_integrity(competition, save=True)
         return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
 
 
@@ -3266,6 +3410,7 @@ class CompetitionPublishView(APIView):
         competition.completion_percent = 100
         competition.save(update_fields=["starts_at", "judging_starts_at", "judging_ends_at", "status", "is_public", "show_in_catalog", "publish_ready", "completion_percent", "updated_at"])
         recompute_competition_timing(competition, save=True)
+        synchronize_competition_integrity(competition, save=True)
         return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
 
 
@@ -3417,6 +3562,7 @@ class CompetitionJudgeAssignmentResponseView(APIView):
         if membership:
             membership.status = "approved" if decision == "accepted" else "withdrawn"
             membership.save(update_fields=["status"])
+        synchronize_competition_integrity(assignment.competition, save=True)
 
         return Response({
             "assignment": CompetitionJudgeAssignmentSerializer(assignment).data,
@@ -3627,6 +3773,7 @@ class CompetitionInvitationResponseView(APIView):
             role__in=["participant", "team_member"],
         ).count()
         competition.save(update_fields=["participants_count"])
+        synchronize_competition_integrity(competition, save=True)
         return Response({
             "invitation": CompetitionInvitationSerializer(invitation).data,
             "participant": CompetitionParticipantSerializer(participant).data,
@@ -3722,6 +3869,7 @@ class CompetitionJudgingView(APIView):
     def post(self, request, pk):
         competition = get_object_or_404(Competition, pk=pk, is_public=True)
         recompute_competition_timing(competition, save=True)
+        synchronize_competition_integrity(competition, save=True)
         if competition.results_frozen:
             return Response({"detail": "Results are frozen for this competition."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3859,6 +4007,7 @@ class CompetitionJudgingView(APIView):
                 defaults={"status": "completed" if score_obj.is_final else "accepted"},
             )
 
+        synchronize_competition_integrity(competition, save=True)
         round_scores = build_round_score_tables(competition, request)
         return Response({
             "score": CompetitionScoreSerializer(score_obj, context={"request": request}).data,

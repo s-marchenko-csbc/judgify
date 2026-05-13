@@ -254,6 +254,18 @@ function CompetitionSection({ title, items = [], savedIds, onSavedChange, emptyT
 }
 
 function NotificationsPanel({ items = [], t }) {
+  const notificationTitle = (item) => {
+    const labels = {
+      score: t("notifications.score", { defaultValue: "Work scored" }),
+      submission: t("notifications.submission", { defaultValue: "New or updated submission" }),
+      join_request_pending: t("notifications.joinRequestPending", { defaultValue: "Pending application" }),
+      competition_creation_request: t("notifications.competitionApproval", { defaultValue: "Competition approval pending" }),
+      judge_assignment: t("notifications.judgeAssignment", { defaultValue: "Judge assignment" }),
+      join_request: t("notifications.joinRequest", { defaultValue: "Application status updated" }),
+      message: t("notifications.message", { defaultValue: "Message" }),
+    };
+    return labels[item.type] || item.title;
+  };
   return (
     <section className="right-panel-block profile-notifications-panel">
       <div className="profile-panel-header"><h2>{t("profile.latestNotifications")}</h2></div>
@@ -261,7 +273,7 @@ function NotificationsPanel({ items = [], t }) {
         <div className="profile-notifications-list">
           {items.map((item) => (
             <button type="button" className="profile-notification-item" key={item.id} onClick={() => item.competition_id && window.location.assign(`/competitions/${item.competition_id}`)}>
-              <strong>{item.title}</strong>
+              <strong>{notificationTitle(item)}</strong>
               <span>{item.competition_name || item.text || getStatusLabel(item.status, t)}</span>
               <small>{getStatusLabel(item.status, t)}</small>
             </button>
@@ -579,6 +591,7 @@ export default function ProfilePage() {
 
   const tabs = [
     { id: "overview", label: t("profile.overview") },
+    { id: "notifications", label: t("profile.latestNotifications") },
     ...(role !== "viewer" ? [{ id: "pending", label: t("profile.pending") }] : []),
     { id: "archived", label: t("profile.archivedTab") },
     ...(role === "organizer" ? [{ id: "drafts", label: myDraftsLabel }] : []),
@@ -613,6 +626,7 @@ export default function ProfilePage() {
 
             {editing && <ProfileEditForm user={user} t={t} onSave={async (patch) => { try { const result = await updateProfileDashboard(patch); updateProfile(result?.user || patch); } catch (error) { console.error(error); updateProfile(patch); } setEditing(false); }} />}
 
+            {activeTab === "notifications" && <NotificationsPanel items={notifications} t={t} />}
             {role === "organizer" && activeTab === "overview" && <CreateCompetitionPanel t={t} />}
             {role === "organizer" && activeTab === "drafts" && <DraftsPanel items={draftCompetitions} t={t} title={myDraftsLabel} />}
             {activeTab === "pending" && <PendingRequestsPanel role={role} requests={pendingRequests} onReview={handleReview} t={t} />}

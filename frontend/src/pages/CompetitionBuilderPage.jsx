@@ -443,6 +443,7 @@ export default function CompetitionBuilderPage() {
       return saved;
     } catch (error) {
       setStatusText(error.message || t("builder.status.notSaved"));
+      setStep(nextStep);
       return null;
     } finally {
       setSaving(false);

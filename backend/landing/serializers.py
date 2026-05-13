@@ -167,24 +167,56 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
             judging_ends_at = ends_at
 
         errors = {}
+        schedule_fields = {
+            "registration_starts_at", "registration_ends_at", "starts_at",
+            "ends_at", "judging_starts_at", "judging_ends_at", "results_public_at",
+        }
 
-        if starts_at and ends_at and ends_at <= starts_at:
+        def changed(field):
+            if self.instance is None:
+                return field in attrs and attrs.get(field) is not None
+            if field not in attrs:
+                return False
+            return getattr(self.instance, field, None) != attrs.get(field)
+
+        schedule_changed = self.instance is None or any(changed(field) for field in schedule_fields)
+
+        def round_schedule_changed(round_items):
+            if self.instance is None:
+                return bool(round_items)
+            existing = {round_obj.id: round_obj for round_obj in self.instance.rounds.all()}
+            seen = set()
+            for item in round_items or []:
+                round_id = item.get("id")
+                if not round_id or round_id not in existing:
+                    return True
+                seen.add(round_id)
+                round_obj = existing[round_id]
+                if (
+                    item.get("starts_at") != round_obj.starts_at
+                    or item.get("ends_at") != round_obj.ends_at
+                    or item.get("sort_order", round_obj.sort_order) != round_obj.sort_order
+                ):
+                    return True
+            return set(existing) != seen
+
+        if schedule_changed and starts_at and ends_at and ends_at <= starts_at:
             errors["ends_at"] = "Competition end must be later than competition start."
 
-        if registration_starts_at and starts_at and registration_starts_at > starts_at:
+        if schedule_changed and registration_starts_at and starts_at and registration_starts_at > starts_at:
             errors["registration_starts_at"] = "Registration cannot start after the competition starts."
-        if registration_ends_at and starts_at and registration_ends_at > starts_at:
+        if schedule_changed and registration_ends_at and starts_at and registration_ends_at > starts_at:
             errors["registration_ends_at"] = "Registration must end no later than the competition start."
-        if registration_starts_at and registration_ends_at and registration_ends_at <= registration_starts_at:
+        if schedule_changed and registration_starts_at and registration_ends_at and registration_ends_at <= registration_starts_at:
             errors["registration_ends_at"] = "Registration end must be later than registration start."
 
-        if judging_starts_at and judging_ends_at and judging_ends_at <= judging_starts_at:
+        if schedule_changed and judging_starts_at and judging_ends_at and judging_ends_at <= judging_starts_at:
             errors["judging_ends_at"] = "Judging end must be later than judging start."
-        if results_public_at and judging_ends_at and results_public_at < judging_ends_at:
+        if schedule_changed and results_public_at and judging_ends_at and results_public_at < judging_ends_at:
             errors["results_public_at"] = "Results cannot be published before judging ends."
 
         rounds = attrs.get("rounds", None)
-        if rounds is not None and starts_at and ends_at:
+        if rounds is not None and starts_at and ends_at and (schedule_changed or round_schedule_changed(rounds)):
             round_errors = []
             previous_end = None
             for index, round_data in enumerate(rounds):
