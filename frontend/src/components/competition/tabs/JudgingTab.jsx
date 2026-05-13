@@ -29,10 +29,94 @@ function judgingModeLabel(t, value) {
   return optionLabel(t, "review_type", modes[0].replaceAll(" ", "_"));
 }
 
+function criterionAllowsReviewType(criterion, reviewType) {
+  const mode = criterion?.judging_mode || "manual";
+  if (mode === "mixed") return ["automatic", "manual", "peer_review"].includes(reviewType);
+  if (mode === "public_voting") return reviewType === "peer_review";
+  return mode === reviewType;
+}
+
 function submissionStatusLabel(t, status) {
   if (status === "accepted") return t("judgingTab.submitted", { defaultValue: "Submitted" });
   if (status === "locked") return t("judgingTab.locked", { defaultValue: "Locked" });
   return optionLabel(t, "status", status);
+}
+
+function ModeOverview({ judging, criteria }) {
+  const { t } = useLanguage();
+  const reviewModes = judging?.review_modes || {};
+  const modeKeys = ["automatic", "manual", "peer_review"].filter((mode) => reviewModes[mode]);
+
+  if (!modeKeys.length) return null;
+
+  return (
+    <div className="judging-mode-overview">
+      {modeKeys.map((mode) => {
+        const modeCriteria = criteria.filter((criterion) => criterionAllowsReviewType(criterion, mode));
+        return (
+          <div key={mode} className={`judging-mode-card judging-mode-card--${mode}`}>
+            <div>
+              <strong>{optionLabel(t, "review_type", mode)}</strong>
+              <span>{t(`judgingTab.modeHints.${mode}`)}</span>
+            </div>
+            <small>{t("judgingTab.criteriaCount", { count: modeCriteria.length })}</small>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SubmittedWorksPanel({ judging }) {
+  const { t } = useLanguage();
+  const submissions = judging?.submissions || EMPTY_ARRAY;
+  const scoreRows = (judging?.round_scores || []).flatMap((table) => (
+    (table.rows || []).map((row) => ({
+      id: row.subject?.id,
+      title: row.subject?.title || row.subject?.name,
+      owner: row.subject?.name,
+      round_title: table.round?.title,
+      status: row.subject?.status,
+      repository_url: row.subject?.repository_url,
+      demo_url: row.subject?.demo_url,
+      file: row.subject?.file,
+    }))
+  ));
+  const items = submissions.length ? submissions : scoreRows;
+
+  return (
+    <div className="judge-scorecard judging-work-queue">
+      <div className="judging-round-heading">
+        <h3>{t("judgingTab.workQueue")}</h3>
+        <span>{t("judgingTab.workQueueCount", { count: items.length })}</span>
+      </div>
+
+      {!items.length ? (
+        <div className="judging-empty">{t("judgingTab.noWorkQueue")}</div>
+      ) : (
+        <div className="judging-work-grid">
+          {items.slice(0, 12).map((item) => (
+            <div className="judging-work-card" key={item.id || `${item.round_title}-${item.title}`}>
+              <div>
+                <strong>{item.title || t("judgingTab.submissionFallback")}</strong>
+                <small>{item.owner || item.participant_name || item.team_name || item.submitted_by_name || t("participantsTab.fallback")}</small>
+              </div>
+              <div className="judging-work-meta">
+                <span>{item.round_title || t("judgingTab.round")}</span>
+                <span>{submissionStatusLabel(t, item.status || "accepted")}</span>
+              </div>
+              <div className="judging-work-links">
+                {item.file?.url && <a href={item.file.url} target="_blank" rel="noreferrer">{item.file.original_name || t("judgingTab.file")}</a>}
+                {item.repository_url && <a href={item.repository_url} target="_blank" rel="noreferrer">{t("judgingTab.repository")}</a>}
+                {item.demo_url && <a href={item.demo_url} target="_blank" rel="noreferrer">{t("judgingTab.demo")}</a>}
+                {!item.file?.url && !item.repository_url && !item.demo_url && <span>{t("judgingTab.noExternalLink")}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
@@ -351,8 +435,12 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
   );
   const subjects = workspace?.subjects || EMPTY_ARRAY;
   const allowedReviewTypes = workspace?.allowed_review_types || EMPTY_ARRAY;
-
   const [reviewType, setReviewType] = useState(workspace?.default_review_type || allowedReviewTypes[0] || "");
+  const scoreableCriteria = useMemo(
+    () => criteria.filter((criterion) => criterionAllowsReviewType(criterion, reviewType)),
+    [criteria, reviewType]
+  );
+
   const [roundId, setRoundId] = useState(rounds[0]?.id || "");
   const subjectsForRound = useMemo(
     () => subjects.filter((subject) => String(subject.round_id) === String(roundId)),
@@ -380,7 +468,9 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
 
   useEffect(() => {
     if (!roundId && rounds[0]?.id) setRoundId(rounds[0].id);
-    if (!reviewType && allowedReviewTypes[0]) setReviewType(allowedReviewTypes[0]);
+    if ((!reviewType || !allowedReviewTypes.includes(reviewType)) && allowedReviewTypes[0]) {
+      setReviewType(allowedReviewTypes[0]);
+    }
   }, [roundId, rounds, reviewType, allowedReviewTypes]);
 
   useEffect(() => {
@@ -393,13 +483,13 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
   }, [subjectsForRound, subjectId]);
 
   useEffect(() => {
-    if (!workspace || !criteria.length || !reviewType || !roundId || !subjectId) {
+    if (!workspace || !scoreableCriteria.length || !reviewType || !roundId || !subjectId) {
       setDraftScores((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
 
     const next = {};
-    criteria.forEach((criterion) => {
+    scoreableCriteria.forEach((criterion) => {
       const key = [reviewType, roundId, subjectId, criterion.id].join(":");
       const existing = existingScoreMap[key];
       if (existing) {
@@ -427,7 +517,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
       });
       return unchanged ? prev : next;
     });
-  }, [workspace, criteria, existingScoreMap, reviewType, roundId, subjectId]);
+  }, [workspace, scoreableCriteria, existingScoreMap, reviewType, roundId, subjectId]);
 
   if (!workspace || !criteria.length || !rounds.length || !subjects.length || workspace.can_score === false) {
     return null;
@@ -444,7 +534,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
   };
 
   const handleSave = async (finalize = false) => {
-    const selectedScores = criteria
+    const selectedScores = scoreableCriteria
       .map((criterion) => ({
         criterion,
         draft: draftScores[criterion.id] || {},
@@ -553,7 +643,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
               </tr>
             </thead>
             <tbody>
-              {criteria.map((criterion) => {
+              {scoreableCriteria.map((criterion) => {
                 const draft = draftScores[criterion.id] || {};
                 return (
                   <tr key={criterion.id}>
@@ -590,6 +680,11 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
                   </tr>
                 );
               })}
+              {!scoreableCriteria.length && (
+                <tr>
+                  <td colSpan="5">{t("judgingTab.noCriteriaForMode")}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -597,10 +692,10 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
       )}
 
       <div className="scorecard-actions">
-        <button type="button" onClick={() => handleSave(false)} disabled={saving || !subjectsForRound.length}>
+        <button type="button" onClick={() => handleSave(false)} disabled={saving || !subjectsForRound.length || !scoreableCriteria.length}>
           {saving ? t("judgingTab.saving") : t("judgingTab.saveDraft")}
         </button>
-        <button type="button" onClick={() => handleSave(true)} disabled={saving || !subjectsForRound.length}>
+        <button type="button" onClick={() => handleSave(true)} disabled={saving || !subjectsForRound.length || !scoreableCriteria.length}>
           {t("judgingTab.finalize")}
         </button>
         {message && <span>{message}</span>}
@@ -631,8 +726,11 @@ export default function JudgingTab({ competition, onScoreSubmit, onSubmissionCre
         </span>
       </div>
 
+      <ModeOverview judging={judging} criteria={judging.criteria || EMPTY_ARRAY} />
+
       <SubmissionPanel competition={competition} judging={judging} onSubmissionCreate={onSubmissionCreate} />
       <JudgeInvitePanel workspace={judging.judge_workspace} onJudgeAssignmentRespond={onJudgeAssignmentRespond} />
+      <SubmittedWorksPanel judging={judging} />
 
       <div className="judging-metric-list">
         {(judging.metrics || []).map((metric) => (
