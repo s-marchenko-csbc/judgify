@@ -975,6 +975,9 @@ class CompetitionCardSerializer(serializers.ModelSerializer):
             role = getattr(getattr(request.user, "profile", None), "primary_role", "")
             if role != "participant" or request.user.is_staff:
                 return False
+            membership = self._membership(obj)
+            if membership and membership.role == "judge":
+                return False
         if obj.access_mode == "invite_only":
             return False
         if obj.status not in ["registration_open", "upcoming", "active"] or not obj.registration_open:
@@ -1182,6 +1185,9 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             if role is None:
                 role = getattr(getattr(request.user, "profile", None), "primary_role", "")
             if role != "participant" or request.user.is_staff:
+                return False
+            membership = self._membership(obj)
+            if membership and membership.role == "judge":
                 return False
         if obj.access_mode == "invite_only":
             return False

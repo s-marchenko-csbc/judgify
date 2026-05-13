@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useLanguage } from "../context/LanguageContext";
 
 const roleOptions = [
@@ -32,8 +32,14 @@ export default function SignUpModal({
   onClose,
   onOpenSignIn,
   onComplete,
+  allowedRoles,
 }) {
   const { t } = useLanguage();
+  const displayedRoleOptions = useMemo(() => {
+    if (!Array.isArray(allowedRoles) || !allowedRoles.length) return roleOptions;
+    return roleOptions.filter((role) => allowedRoles.includes(role.id));
+  }, [allowedRoles]);
+  const defaultRole = displayedRoleOptions[0]?.id || "participant";
   const [form, setForm] = useState(initialForm);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -72,14 +78,18 @@ export default function SignUpModal({
       return;
     }
 
+    const primaryRole = displayedRoleOptions.some((role) => role.id === form.primaryRole)
+      ? form.primaryRole
+      : defaultRole;
+
     onComplete?.({
       register: true,
       username,
       email,
-      accountKey: `email:${email}:${form.primaryRole}`,
+      accountKey: `email:${email}:${primaryRole}`,
       displayName: username,
       password: form.password,
-      primaryRole: form.primaryRole,
+      primaryRole,
     });
   };
 
@@ -167,7 +177,7 @@ export default function SignUpModal({
           <div className="signup-role-block">
             <div className="signup-role-label">{t("auth.rolePrompt")}</div>
             <div className="signup-role-list" role="radiogroup" aria-label={t("auth.chooseRole")}>
-              {roleOptions.map((role) => (
+              {displayedRoleOptions.map((role) => (
                 <button
                   key={role.id}
                   type="button"

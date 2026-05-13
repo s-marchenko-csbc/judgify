@@ -4,7 +4,7 @@ import { useLanguage } from "../../context/LanguageContext";
 
 function getJoinState(competition, currentUser, t) {
   const role = currentUser?.primaryRole;
-  if (role !== "participant") return null;
+  if (currentUser && role !== "participant") return null;
 
   const status = competition?.user_participation_status || "none";
   const team = competition?.user_team?.name ? ` - ${competition.user_team.name}` : "";

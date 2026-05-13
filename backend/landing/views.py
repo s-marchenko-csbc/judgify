@@ -1669,6 +1669,11 @@ class JoinCompetitionView(APIView):
             competition=competition,
             user=request.user,
         ).select_related("team").first()
+        if existing_member and existing_member.role == "judge":
+            return Response(
+                {"detail": "Judges cannot participate in the same competition they judge."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         if existing_member and existing_member.status in ["approved", "pending"]:
             return Response({
                 "detail": "You already have a participation record for this competition.",
@@ -1676,6 +1681,14 @@ class JoinCompetitionView(APIView):
                 "role": existing_member.role,
                 "team": CompetitionTeamSerializer(existing_member.team).data if existing_member.team else None,
             }, status=status.HTTP_200_OK)
+
+        existing_request = CompetitionJoinRequest.objects.filter(
+            competition=competition,
+            user=request.user,
+            status__in=["pending", "approved"],
+        ).select_related("team").order_by("-created_at").first()
+        if existing_request:
+            return Response(CompetitionJoinRequestSerializer(existing_request).data, status=status.HTTP_200_OK)
 
         team = None
         team_name = (request.data.get("team_name") or "").strip()
@@ -2608,7 +2621,7 @@ def user_can_edit_competition(user, competition):
         return False
     if CompetitionParticipant.objects.filter(competition=competition, user=user, role="organizer").exists():
         return True
-    return competition.status == "draft" and not CompetitionParticipant.objects.filter(competition=competition, role="organizer").exists()
+    return False
 
 
 def ensure_organizer_membership(user, competition):
