@@ -391,6 +391,7 @@ const dictionaries = {
       you: "You",
     },
     overviewTab: {
+      description: "Competition description",
       liveStream: "Live stream",
       roundStream: "Round stream",
       competitionStream: "Competition stream",
@@ -1107,6 +1108,7 @@ const dictionaries = {
       you: "Ви",
     },
     overviewTab: {
+      description: "Опис змагання",
       liveStream: "Трансляція",
       roundStream: "Трансляція раунду",
       competitionStream: "Трансляція змагання",

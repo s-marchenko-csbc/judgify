@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
+
+const EMPTY_ARRAY = [];
 import { useLanguage } from "../../../context/LanguageContext";
 
 function formatScore(value) {
@@ -312,11 +314,15 @@ function JudgeInvitePanel({ workspace, onJudgeAssignmentRespond }) {
 
 function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
   const { t } = useLanguage();
-  const workspace = judging?.judge_workspace;
-  const criteria = judging?.criteria || [];
-  const rounds = (judging?.round_scores || []).map((item) => item.round).filter(Boolean);
-  const subjects = workspace?.subjects || [];
-  const allowedReviewTypes = workspace?.allowed_review_types || [];
+  const workspace = judging?.judge_workspace || null;
+  const criteria = judging?.criteria || EMPTY_ARRAY;
+  const roundScores = judging?.round_scores || EMPTY_ARRAY;
+  const rounds = useMemo(
+    () => roundScores.map((item) => item.round).filter(Boolean),
+    [roundScores]
+  );
+  const subjects = workspace?.subjects || EMPTY_ARRAY;
+  const allowedReviewTypes = workspace?.allowed_review_types || EMPTY_ARRAY;
 
   const [reviewType, setReviewType] = useState(workspace?.default_review_type || allowedReviewTypes[0] || "");
   const [roundId, setRoundId] = useState(rounds[0]?.id || "");
@@ -351,11 +357,19 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
 
   useEffect(() => {
     if (!subjectsForRound.some((subject) => subject.id === subjectId)) {
-      setSubjectId(subjectsForRound[0]?.id || "");
+      const nextSubjectId = subjectsForRound[0]?.id || "";
+      if (subjectId !== nextSubjectId) {
+        setSubjectId(nextSubjectId);
+      }
     }
   }, [subjectsForRound, subjectId]);
 
   useEffect(() => {
+    if (!workspace || !criteria.length || !reviewType || !roundId || !subjectId) {
+      setDraftScores((prev) => (Object.keys(prev).length ? {} : prev));
+      return;
+    }
+
     const next = {};
     criteria.forEach((criterion) => {
       const key = [reviewType, roundId, subjectId, criterion.id].join(":");
@@ -371,8 +385,21 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
         next[criterion.id] = { score: "", comment: "", scoreId: null, isFinal: false };
       }
     });
-    setDraftScores(next);
-  }, [criteria, existingScoreMap, reviewType, roundId, subjectId]);
+    setDraftScores((prev) => {
+      if (Object.keys(prev).length !== Object.keys(next).length) return next;
+      const unchanged = Object.keys(next).every((criterionId) => {
+        const prevItem = prev[criterionId] || {};
+        const nextItem = next[criterionId] || {};
+        return (
+          String(prevItem.score ?? "") === String(nextItem.score ?? "") &&
+          String(prevItem.comment ?? "") === String(nextItem.comment ?? "") &&
+          String(prevItem.scoreId ?? "") === String(nextItem.scoreId ?? "") &&
+          Boolean(prevItem.isFinal) === Boolean(nextItem.isFinal)
+        );
+      });
+      return unchanged ? prev : next;
+    });
+  }, [workspace, criteria, existingScoreMap, reviewType, roundId, subjectId]);
 
   if (!workspace || !criteria.length || !rounds.length || !subjects.length || workspace.can_score === false) {
     return null;

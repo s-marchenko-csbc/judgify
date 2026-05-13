@@ -186,6 +186,7 @@ class Command(BaseCommand):
         self._create_materials(competitions, demo_users["organizer"])
         self._create_saved_and_recent(competitions, demo_users["participant"], demo_users["viewer"])
         self._create_team_memberships_and_pending_requests(competitions, demo_users, fake_users)
+        self._ensure_demo_team_result_subjects(competitions, fake_users)
         self._create_announcements_and_comments(competitions, demo_users, fake_users)
         self._create_demo_submissions_scores_and_metrics(competitions, fake_users, judge_users, demo_users["organizer"], now)
         self._refresh_competition_counters(competitions)
@@ -1083,6 +1084,41 @@ class Command(BaseCommand):
                 )
                 if idx % 2 == 0:
                     RecentlyViewedCompetition.objects.get_or_create(user=member_user, competition=comp)
+
+    def _ensure_demo_team_result_subjects(self, competitions, fake_users):
+        demo_team_names = [
+            "Aurora Coders",
+            "Blue Logic",
+            "Data Wings",
+            "Pixel Forge",
+            "Secure Sparks",
+        ]
+        result_statuses = {"active", "judging", "finished", "archived"}
+        for comp in competitions:
+            if comp.status not in result_statuses or comp.participation_type == "individual":
+                continue
+            for index, team_name in enumerate(demo_team_names):
+                captain_user, captain_name = fake_users[index % len(fake_users)]
+                team, _ = CompetitionTeam.objects.update_or_create(
+                    competition=comp,
+                    name=team_name,
+                    defaults={
+                        "captain": captain_user,
+                        "status": "approved",
+                        "description": f"Demo team with seeded submissions and round results for {comp.name}.",
+                    },
+                )
+                CompetitionParticipant.objects.update_or_create(
+                    competition=comp,
+                    user=captain_user,
+                    defaults={
+                        "display_name": captain_name,
+                        "role": "team_member",
+                        "status": "approved",
+                        "team": team,
+                        "is_active_now": comp.status == "active" and index < 3,
+                    },
+                )
 
     def _create_announcements_and_comments(self, competitions, demo_users, fake_users):
         commenter_pool = [

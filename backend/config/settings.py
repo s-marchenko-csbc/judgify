@@ -5,7 +5,10 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
-if os.getenv('RENDER') != 'true':
+# Do not load Docker-only defaults when backend is started directly on Windows/Linux host.
+# Otherwise DB_HOST=db is used outside Docker and Django exits before /api/health/ can answer.
+IN_DOCKER = os.getenv('IN_DOCKER') == '1' or Path('/.dockerenv').exists()
+if os.getenv('RENDER') != 'true' and IN_DOCKER:
     load_dotenv(BASE_DIR / '.env.docker')
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key')
@@ -67,11 +70,13 @@ ASGI_APPLICATION = 'config.asgi.application'
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 if DATABASE_URL:
+    is_postgres_url = DATABASE_URL.startswith(('postgres://', 'postgresql://'))
+    ssl_require = is_postgres_url and os.getenv('DB_SSL_REQUIRE', '1') == '1'
     DATABASES = {
         'default': dj_database_url.parse(
             DATABASE_URL,
             conn_max_age=600,
-            ssl_require=os.getenv('DB_SSL_REQUIRE', '1') == '1',
+            ssl_require=ssl_require,
         )
     }
 else:

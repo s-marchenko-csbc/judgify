@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import Header from "../components/Header";
@@ -126,6 +126,7 @@ export default function CompetitionPage() {
     searchParams.get("tab") || "overview"
   );
   const [inviteMessage, setInviteMessage] = useState("");
+  const tabAlertKeys = useRef(new Set());
 
   const canCurrentUserJoin =
     isAuthenticated
@@ -206,6 +207,27 @@ export default function CompetitionPage() {
     });
   }, [authSessionKey]);
 
+  const showTabLoadAlert = (key, message) => {
+    const alertKey = `${id}:${authSessionKey}:${key}`;
+    if (tabAlertKeys.current.has(alertKey)) return;
+    tabAlertKeys.current.add(alertKey);
+    window.alert(message);
+  };
+
+  const normalizeResults = (resultsData = {}) => ({
+    roundHistory: (resultsData.round_history || []).map((item) => ({
+      round: item.round_number ?? item.round,
+      leader: item.leader_name ?? item.leader,
+      topScore: item.top_score ?? item.topScore,
+    })),
+    leaderboard: (resultsData.leaderboard || []).map((item) => ({
+      rank: item.rank,
+      name: item.name,
+      score: item.score,
+    })),
+    roundScores: resultsData.round_scores || [],
+  });
+
   useEffect(() => {
     let isMounted = true;
 
@@ -215,31 +237,17 @@ export default function CompetitionPage() {
         setError("");
 
         const detail = await fetchCompetitionDetail(id);
-        const participants = await fetchCompetitionParticipants(id);
-        const [resultsResponse, judgingResponse] = await Promise.allSettled([
-          fetchCompetitionResults(id),
-          fetchCompetitionJudging(id),
-        ]);
-        const resultsData = resultsResponse.status === "fulfilled" ? resultsResponse.value : {};
-        const results = {
-          roundHistory: (resultsData.round_history || []).map((item) => ({
-            round: item.round_number ?? item.round,
-            leader: item.leader_name ?? item.leader,
-            topScore: item.top_score ?? item.topScore,
-          })),
-          leaderboard: (resultsData.leaderboard || []).map((item) => ({
-            rank: item.rank,
-            name: item.name,
-            score: item.score,
-          })),
-          roundScores: resultsData.round_scores || [],
-        };
-        const judging = judgingResponse.status === "fulfilled" ? judgingResponse.value : { mode: t("competitionPage.notConfigured"), metrics: [] };
+        const participants = await fetchCompetitionParticipants(id).catch(() => []);
         if (isMounted) {
-          setCompetition(enrichCompetition({ ...detail, participants, results, judging }, language, t));
+          setCompetition((prev) => enrichCompetition({
+            ...(prev || {}),
+            ...detail,
+            participants,
+            results: prev?.results,
+            judging: prev?.judging,
+          }, language, t));
         }
       } catch (err) {
-        console.error(err);
         if (location.state?.competition) {
           if (showLoader) setLoading(false);
           return;
@@ -251,7 +259,6 @@ export default function CompetitionPage() {
           const participants = await fetchCompetitionParticipants(id).catch(() => []);
           if (isMounted) setCompetition(enrichCompetition({ ...found, participants }, language, t));
         } catch (fallbackError) {
-          console.error(fallbackError);
           if (isMounted) setError(t("competitionPage.loadError"));
         }
       } finally {
@@ -260,13 +267,69 @@ export default function CompetitionPage() {
     }
 
     loadCompetition({ showLoader: true });
-    const intervalId = window.setInterval(() => loadCompetition({ showLoader: false }), 5000);
+    const intervalId = window.setInterval(() => loadCompetition({ showLoader: false }), 15000);
 
     return () => {
       isMounted = false;
       window.clearInterval(intervalId);
     };
   }, [authSessionKey, id, location.state, language, t]);
+
+  useEffect(() => {
+    if (!competition?.id) return;
+    let isMounted = true;
+
+    async function loadTabData() {
+      if (activeTab === "results") {
+        try {
+          const resultsData = await fetchCompetitionResults(id);
+          if (!isMounted) return;
+          setCompetition((prev) => enrichCompetition({
+            ...prev,
+            results: normalizeResults(resultsData),
+          }, language, t));
+        } catch (err) {
+          if (!isMounted) return;
+          showTabLoadAlert("results", err?.message || t("competitionPage.resultsLoadError", { defaultValue: "Results are not available yet." }));
+          setCompetition((prev) => enrichCompetition({
+            ...prev,
+            results: prev?.results || { roundHistory: [], leaderboard: [], roundScores: [] },
+          }, language, t));
+        }
+      }
+
+      if (activeTab === "judging") {
+        try {
+          const judging = await fetchCompetitionJudging(id);
+          if (!isMounted) return;
+          setCompetition((prev) => enrichCompetition({
+            ...prev,
+            judging,
+          }, language, t));
+        } catch (err) {
+          if (!isMounted) return;
+          showTabLoadAlert("judging", err?.message || t("competitionPage.judgingLoadError", { defaultValue: "Judging materials are not available." }));
+          setCompetition((prev) => enrichCompetition({
+            ...prev,
+            judging: {
+              ...(prev?.judging || {}),
+              mode: t("competitionPage.notConfigured"),
+              metrics: [],
+              criteria: [],
+              round_scores: [],
+              my_submissions: [],
+              judge_workspace: null,
+            },
+          }, language, t));
+        }
+      }
+    }
+
+    loadTabData();
+    return () => {
+      isMounted = false;
+    };
+  }, [activeTab, authSessionKey, competition?.id, id, language, t]);
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -402,6 +465,7 @@ export default function CompetitionPage() {
         },
         results: {
           ...(prev?.results || {}),
+          roundHistory: response.round_history ? normalizeResults(response).roundHistory : (prev?.results?.roundHistory || []),
           leaderboard: response.leaderboard || prev?.results?.leaderboard || [],
           roundScores: response.round_scores || prev?.results?.roundScores || [],
         },
@@ -445,6 +509,7 @@ export default function CompetitionPage() {
         },
         results: {
           ...(prev?.results || {}),
+          roundHistory: response.round_history ? normalizeResults(response).roundHistory : (prev?.results?.roundHistory || []),
           leaderboard: response.leaderboard || prev?.results?.leaderboard || [],
           roundScores: response.round_scores || prev?.results?.roundScores || [],
         },

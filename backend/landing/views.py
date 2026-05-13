@@ -2079,6 +2079,17 @@ class TeamManagementView(APIView):
         return Response(CompetitionTeamSerializer(team).data)
 
 
+def build_file_download_url(file_obj, request=None):
+    if not file_obj:
+        return None
+    if getattr(file_obj, "public_url", ""):
+        return file_obj.public_url
+    path = f"/api/files/{file_obj.id}/download/"
+    if request is not None:
+        return request.build_absolute_uri(path)
+    return path
+
+
 def judging_subjects(competition, request=None):
     submissions = CompetitionSubmission.objects.filter(
         competition=competition,
@@ -2199,17 +2210,56 @@ def score_visibility_allows_details(request, competition):
 
 def results_are_public(competition, now=None):
     now = now or timezone.now()
+    if not getattr(competition, "is_public", False):
+        return False
     if competition.results_public_at:
         return now >= competition.results_public_at
-    if competition.judging_ends_at:
-        return now > competition.judging_ends_at
     return competition.status in ["finished", "archived"]
 
 
 def user_can_view_results(user, competition):
     if user and user.is_authenticated and user_can_edit_competition(user, competition):
         return True
-    return results_are_public(competition)
+    if results_are_public(competition):
+        return True
+    if user and user.is_authenticated:
+        membership = user_competition_membership(user, competition)
+        return bool(
+            membership
+            and membership.status == "approved"
+            and membership.role in ["participant", "team_member"]
+        )
+    return False
+
+
+def user_can_view_full_results(user, competition):
+    return bool(user and user.is_authenticated and user_can_edit_competition(user, competition)) or results_are_public(competition)
+
+
+def user_result_subject_ids(user, competition):
+    if not user or not user.is_authenticated:
+        return set()
+    membership = user_competition_membership(user, competition)
+    if not membership or membership.status != "approved" or membership.role not in ["participant", "team_member"]:
+        return set()
+    subject_ids = {f"participant-{membership.id}"}
+    if membership.team_id:
+        subject_ids.add(f"team-{membership.team_id}")
+    return subject_ids
+
+
+def filter_round_scores_for_user(round_scores, user, competition):
+    allowed_ids = user_result_subject_ids(user, competition)
+    if not allowed_ids:
+        return []
+    filtered_tables = []
+    for table in round_scores:
+        rows = [
+            row for row in table.get("rows", [])
+            if (row.get("subject") or {}).get("id") in allowed_ids
+        ]
+        filtered_tables.append({**table, "rows": rows})
+    return filtered_tables
 
 
 def result_subject_key(subject):
@@ -2639,14 +2689,17 @@ class CompetitionResultsView(APIView):
         ).order_by("round_number", "id")
 
         round_scores = build_round_score_tables(competition, request)
-        if not user_can_edit_competition(request.user, competition):
-            round_scores = [
-                {
-                    **table,
-                    "rows": [row for row in table.get("rows", []) if row.get("total_score") is not None],
-                }
-                for table in round_scores
-            ]
+        if user_can_view_full_results(request.user, competition):
+            if not user_can_edit_competition(request.user, competition):
+                round_scores = [
+                    {
+                        **table,
+                        "rows": [row for row in table.get("rows", []) if row.get("total_score") is not None],
+                    }
+                    for table in round_scores
+                ]
+        else:
+            round_scores = filter_round_scores_for_user(round_scores, request.user, competition)
         live_leaderboard = build_live_leaderboard(competition, request, tables=round_scores)
         if not live_leaderboard:
             live_leaderboard = CompetitionLeaderboardEntrySerializer(
@@ -3634,6 +3687,8 @@ class CompetitionJudgingView(APIView):
                 status__in=["accepted", "locked"],
             ).select_related("round", "participant", "team", "submitted_by", "file")
 
+        round_scores = build_round_score_tables(competition, request) if can_view_judging_materials or user_can_view_results(request.user, competition) else []
+
         return Response({
             "mode": mode,
             "review_modes": {
@@ -3655,7 +3710,7 @@ class CompetitionJudgingView(APIView):
                 many=True,
                 context={"request": request},
             ).data,
-            "round_scores": build_round_score_tables(competition, request),
+            "round_scores": round_scores,
             "judge_workspace": build_judge_workspace(competition, request),
             "assignments": CompetitionJudgeAssignmentSerializer(assignments, many=True).data,
             "metrics": CompetitionJudgingMetricSerializer(

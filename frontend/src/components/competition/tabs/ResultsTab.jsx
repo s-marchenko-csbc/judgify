@@ -1,9 +1,53 @@
 import React from "react";
 import { useLanguage } from "../../../context/LanguageContext";
 
+const scoreValue = (value) => {
+  if (value === null || value === undefined || value === "") return "-";
+  const numberValue = Number(value);
+  if (Number.isNaN(numberValue)) return value;
+  return Number.isInteger(numberValue) ? numberValue : numberValue.toFixed(2);
+};
+
+const buildLeaderboardFromRoundScores = (roundScores = []) => {
+  const totals = new Map();
+
+  roundScores.forEach((table) => {
+    (table.rows || []).forEach((row) => {
+      if (row.total_score === null || row.total_score === undefined) return;
+      const subject = row.subject || {};
+      const key = subject.team_id ? `team-${subject.team_id}` : subject.participant_id ? `participant-${subject.participant_id}` : subject.id;
+      if (!key) return;
+      const current = totals.get(key) || {
+        name: subject.name || subject.title || "—",
+        score: 0,
+      };
+      current.score += Number(row.total_score) || 0;
+      totals.set(key, current);
+    });
+  });
+
+  return Array.from(totals.values())
+    .sort((a, b) => b.score - a.score || String(a.name).localeCompare(String(b.name)))
+    .map((item, index) => ({ ...item, rank: index + 1 }));
+};
+
+const buildRoundHistoryFromRoundScores = (roundScores = []) =>
+  roundScores.map((table, index) => {
+    const scoredRows = (table.rows || []).filter((row) => row.total_score !== null && row.total_score !== undefined);
+    const best = [...scoredRows].sort((a, b) => (b.total_score || 0) - (a.total_score || 0))[0];
+    return {
+      round: table.round?.sort_order || index + 1,
+      title: table.round?.title,
+      leader: best?.subject?.name || best?.subject?.title || "—",
+      topScore: best?.total_score ?? 0,
+    };
+  });
+
 export default function ResultsTab({ competition }) {
   const { t } = useLanguage();
   const roundScores = competition.results?.roundScores || competition.judging?.round_scores || [];
+  const roundHistory = (competition.results?.roundHistory?.length ? competition.results.roundHistory : buildRoundHistoryFromRoundScores(roundScores));
+  const leaderboard = (competition.results?.leaderboard?.length ? competition.results.leaderboard : buildLeaderboardFromRoundScores(roundScores));
 
   return (
     <section className="competition-panel">
@@ -13,13 +57,19 @@ export default function ResultsTab({ competition }) {
         <div className="results-card">
           <h3>{t("resultsTab.roundHistory")}</h3>
           <div className="round-history-list">
-            {(competition.results?.roundHistory || []).map((item) => (
-              <div key={item.round} className="round-history-row">
-                <span>{t("resultsTab.round", { round: item.round })}</span>
+            {roundHistory.length ? roundHistory.map((item) => (
+              <div key={`${item.round}-${item.title || item.leader}`} className="round-history-row">
+                <span>{item.title || t("resultsTab.round", { round: item.round })}</span>
                 <span>{item.leader}</span>
-                <strong>{item.topScore}</strong>
+                <strong>{scoreValue(item.topScore)}</strong>
               </div>
-            ))}
+            )) : (
+              <div className="round-history-row">
+                <span>{t("resultsTab.noRoundHistory", { defaultValue: "Немає даних про раунди" })}</span>
+                <span>—</span>
+                <strong>—</strong>
+              </div>
+            )}
           </div>
         </div>
 
@@ -34,13 +84,17 @@ export default function ResultsTab({ competition }) {
               </tr>
             </thead>
             <tbody>
-              {(competition.results?.leaderboard || []).map((item) => (
-                <tr key={item.rank}>
+              {leaderboard.length ? leaderboard.map((item) => (
+                <tr key={`${item.rank}-${item.name}`}>
                   <td>{item.rank}</td>
                   <td>{item.name}</td>
-                  <td>{item.score}</td>
+                  <td>{scoreValue(item.score)}</td>
                 </tr>
-              ))}
+              )) : (
+                <tr>
+                  <td colSpan="3">{t("resultsTab.noLeaderboard", { defaultValue: "Рейтинг ще не сформовано" })}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -54,7 +108,7 @@ export default function ResultsTab({ competition }) {
               <div className="round-history-row">
                 <span>{table.round?.title || t("judgingTab.round")}</span>
                 <span>{t(`options.status.${table.round?.status}`, { defaultValue: table.round?.status || "" })}</span>
-                <strong>{t("resultsTab.scored", { count: table.rows?.length || 0 })}</strong>
+                <strong>{t("resultsTab.scored", { count: (table.rows || []).filter((row) => row.total_score !== null && row.total_score !== undefined).length })}</strong>
               </div>
               <table className="leaderboard-table">
                 <thead>
@@ -69,7 +123,7 @@ export default function ResultsTab({ competition }) {
                     <tr key={row.subject?.id}>
                       <td>{row.subject?.title || row.subject?.name}</td>
                       <td>{row.scored_criteria}</td>
-                      <td>{row.total_score ?? "-"}</td>
+                      <td>{scoreValue(row.total_score)}</td>
                     </tr>
                   ))}
                 </tbody>

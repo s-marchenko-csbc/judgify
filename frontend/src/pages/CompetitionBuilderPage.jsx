@@ -794,7 +794,7 @@ export default function CompetitionBuilderPage() {
                       <option value="mixed">{t("options.review_type.mixed", { defaultValue: "Mixed" })}</option>
                     </select>
                     <input type="number" min="1" value={criterion.max_score} onChange={(e) => updateArrayItem("judging_criteria", index, "max_score", Math.max(1, Number(e.target.value) || 1))} />
-                    <input type="number" min="0" step="0.1" value={criterion.weight} onChange={(e) => updateArrayItem("judging_criteria", index, "weight", Math.max(0, Number(e.target.value) || 0))} />
+                    <Field label={t("builder.criterionWeight", { defaultValue: "Вага критерію" })}><input type="number" min="0" step="0.1" value={criterion.weight} onChange={(e) => updateArrayItem("judging_criteria", index, "weight", Math.max(0, Number(e.target.value) || 0))} /></Field>
                     <textarea value={criterion.description || ""} onChange={(e) => updateArrayItem("judging_criteria", index, "description", e.target.value)} placeholder={t("builder.criterionDescription", { defaultValue: "Criterion description" })} />
                   </div>
                 ))}

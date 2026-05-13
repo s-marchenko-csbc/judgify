@@ -46,19 +46,6 @@ def build_file_download_url(user_file, request=None):
     return request.build_absolute_uri(path) if request else path
 
 
-def build_profile_avatar_url(profile, request=None):
-    """Return a safe avatar URL for the current UserProfile model.
-
-    Older serializers expected UserProfile.avatar, but the current model stores
-    avatars through avatar_file. Accessing the removed avatar attribute caused
-    GET /api/competitions/<id>/ to fail with HTTP 500 whenever announcements or
-    comments were serialized.
-    """
-    if not profile:
-        return ""
-    return build_file_download_url(getattr(profile, "avatar_file", None), request)
-
-
 class CompetitionRoundSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(required=False)
 
@@ -495,7 +482,11 @@ class CompetitionAnnouncementCommentSerializer(serializers.ModelSerializer):
 
     def get_author_avatar_url(self, obj):
         profile = getattr(obj.author, "profile", None) if obj.author else None
-        return build_profile_avatar_url(profile, self.context.get("request"))
+        if profile and profile.avatar_file:
+            request = self.context.get("request")
+            url = profile.avatar_file.public_url or build_file_download_url(profile.avatar_file, request)
+            return url or ""
+        return ""
 
 
 class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
@@ -543,7 +534,11 @@ class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
 
     def get_author_avatar_url(self, obj):
         profile = getattr(obj.author, "profile", None) if obj.author else None
-        return build_profile_avatar_url(profile, self.context.get("request"))
+        if profile and profile.avatar_file:
+            request = self.context.get("request")
+            url = profile.avatar_file.public_url or build_file_download_url(profile.avatar_file, request)
+            return url or ""
+        return ""
 
     def get_can_edit(self, obj):
         request = self.context.get("request")

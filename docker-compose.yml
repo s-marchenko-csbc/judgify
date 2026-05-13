@@ -10,10 +10,15 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d judgify"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   backend:
     build: ./backend
-    command: bash -lc "python manage.py migrate && python manage.py seed_landing && python manage.py shell -c \"from django.contrib.auth import get_user_model; U=get_user_model(); U.objects.filter(username='admin').exists() or U.objects.create_superuser('admin','admin@example.com','admin12345')\" && python manage.py runserver 0.0.0.0:8000"
+    command: bash /app/start.sh
     volumes:
       - ./backend:/app
     ports:
@@ -21,7 +26,8 @@ services:
     env_file:
       - ./backend/.env.docker
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   frontend:
     build: ./frontend

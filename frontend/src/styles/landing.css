@@ -1127,6 +1127,34 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   font-weight: 700;
 }
 
+.competition-description-card {
+  border: 1px solid #e7e8ed;
+  border-radius: 16px;
+  padding: 18px;
+  margin-bottom: 22px;
+  background: #f8faff;
+}
+
+.competition-description-card .competition-section-title {
+  margin-bottom: 12px;
+}
+
+.competition-description-lead {
+  margin: 0 0 12px;
+  color: #202945;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.competition-description-text {
+  margin: 0;
+  color: #4b5568;
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-line;
+}
+
 .announcement-card {
   border: 1px solid #e7e8ed;
   border-radius: 16px;
@@ -5045,6 +5073,62 @@ body { background: radial-gradient(circle at 16% 8%, rgba(177,201,239,.72), tran
   }
 
   .admin-server-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Competition judging layout fix ===== */
+.competition-detail-page .competition-page-shell {
+  max-width: 1320px;
+}
+
+.competition-page-grid,
+.competition-page-grid > *,
+.competition-panel,
+.judging-round-list,
+.judging-round-block,
+.judge-scorecard,
+.results-round-score-block {
+  min-width: 0;
+}
+
+.judging-round-block,
+.judge-scorecard,
+.results-round-score-block {
+  width: 100%;
+  overflow: hidden;
+}
+
+.judging-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.judging-score-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.judging-score-table th:first-child,
+.judging-score-table td:first-child {
+  width: 50%;
+}
+
+.judging-score-table th:last-child,
+.judging-score-table td:last-child {
+  width: 120px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.judging-round-heading span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 1400px) {
+  .competition-page-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -91,6 +91,9 @@ export default function OverviewTab({
   const { t } = useLanguage();
   const { isAuthenticated } = useAuth();
   const announcements = useMemo(() => competition.announcements || [], [competition.announcements]);
+
+  const fullDescription = String(competition.full_description || competition.description || competition.short_description || "").trim();
+  const shortDescription = String(competition.short_description || "").trim();
   const [draft, setDraft] = useState({ id: null, title: "", text: "", is_pinned: false });
   const [commentDrafts, setCommentDrafts] = useState({});
   const [saving, setSaving] = useState(false);
@@ -177,6 +180,18 @@ export default function OverviewTab({
   return (
     <section className="competition-panel">
       <StreamBlock competition={competition} />
+
+      <section className="competition-description-card">
+        <h2 className="competition-section-title">
+          {t("overviewTab.description", { defaultValue: "Competition description" })}
+        </h2>
+        {shortDescription && shortDescription !== fullDescription && (
+          <p className="competition-description-lead">{shortDescription}</p>
+        )}
+        <p className="competition-description-text">
+          {fullDescription || t("competitionPage.descriptionFallback")}
+        </p>
+      </section>
 
       <h2 className="competition-section-title">{t("overviewTab.announcements")}</h2>
 
