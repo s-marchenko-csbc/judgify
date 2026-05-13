@@ -341,13 +341,22 @@ export default function CompetitionPage() {
   const handleSubmissionCreate = async (payload) => {
     const submission = await submitCompetitionWork(id, payload);
     setCompetition((prev) =>
-      enrichCompetition({
-        ...prev,
-        judging: {
-          ...(prev?.judging || {}),
-          my_submissions: [submission, ...(prev?.judging?.my_submissions || [])],
-        },
-      }, language, t)
+      enrichCompetition((() => {
+        const currentSubmissions = prev?.judging?.my_submissions || [];
+        const policy = prev?.submission_settings?.submission_policy || "single";
+        const nextSubmissions = currentSubmissions.filter((item) => {
+          if (item.id === submission.id) return false;
+          if (policy !== "multiple" && String(item.round) === String(submission.round)) return false;
+          return true;
+        });
+        return {
+          ...prev,
+          judging: {
+            ...(prev?.judging || {}),
+            my_submissions: [submission, ...nextSubmissions],
+          },
+        };
+      })(), language, t)
     );
     return submission;
   };

@@ -13,6 +13,7 @@ import {
   fetchLandingFilters,
   fetchSidebar,
 } from "../api/landingApi";
+import { fetchSavedCompetitions } from "../api/savedApi";
 
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
@@ -36,10 +37,10 @@ const statusTabs = {
   archived: ["archived"],
 };
 
-function mergeSavedState(items, savedIds) {
+function mergeSavedState(items, savedIds, { isAuthenticated = false, trustItemState = false } = {}) {
   return (items || []).map((item) => ({
     ...item,
-    is_saved: savedIds.has(item.id) || Boolean(item.is_saved),
+    is_saved: isAuthenticated && (savedIds.has(item.id) || (trustItemState && Boolean(item.is_saved))),
   }));
 }
 
@@ -72,25 +73,25 @@ function deriveTimedCompetition(item, now) {
         ? registrationStartsAt <= now && (!startsAt || now < startsAt)
         : Boolean(item.registration_open);
 
-  const judgingOpen = isWithin(judgingStartsAt, judgingEndsAt, now);
+  const resultsPublished = Boolean(resultsPublicAt && now >= resultsPublicAt);
+  const judgingOpen = !resultsPublished
+    && Boolean(judgingStartsAt || judgingEndsAt)
+    && (!judgingStartsAt || now >= judgingStartsAt)
+    && (!judgingEndsAt || now <= judgingEndsAt);
   let status = item.status || "upcoming";
 
-  if (status === "judging" && judgingOpen) {
+  if (resultsPublished) {
+    status = "finished";
+  } else if (judgingOpen) {
     status = "judging";
   } else if (startsAt && now < startsAt) {
     status = registrationOpen ? "registration_open" : "upcoming";
   } else if (isWithin(startsAt, endsAt, now)) {
     status = "active";
-  } else if (judgingOpen) {
-    status = "judging";
   } else if (endsAt && now > endsAt) {
-    if (judgingStartsAt && now < judgingStartsAt) {
-      status = "judging";
-    } else if (judgingEndsAt && now <= judgingEndsAt) {
-      status = "judging";
-    } else {
-      status = "finished";
-    }
+    status = "finished";
+  } else if (status === "published") {
+    status = registrationOpen ? "registration_open" : "upcoming";
   }
 
   let timerDeadline = null;
@@ -216,25 +217,29 @@ export default function LandingPage() {
 
   const refreshCompetitions = useCallback(async ({ showLoader = false } = {}) => {
     const seq = ++loadSeqRef.current;
+    const requestAuthKey = authSessionKey;
     if (showLoader) setLoading(true);
     try {
       const data = await fetchCompetitions(requestFilters);
-      if (seq !== loadSeqRef.current) return;
-      setCompetitions((prev) => {
+      if (seq !== loadSeqRef.current || requestAuthKey !== authSessionKey) return;
+      setCompetitions(() => {
         const localSaved = isAuthenticated ? new Set(savedIdsRef.current) : new Set();
         if (isAuthenticated) {
-          prev.forEach((item) => {
+          data.forEach((item) => {
             if (item.is_saved) localSaved.add(item.id);
           });
         }
-        return mergeSavedState(data, localSaved);
+        return mergeSavedState(data, localSaved, {
+          isAuthenticated,
+          trustItemState: isAuthenticated,
+        });
       });
     } catch (error) {
       console.error(error);
     } finally {
       if (showLoader && seq === loadSeqRef.current) setLoading(false);
     }
-  }, [isAuthenticated, requestFilters]);
+  }, [authSessionKey, isAuthenticated, requestFilters]);
 
   useEffect(() => {
     let cancelled = false;
@@ -278,28 +283,36 @@ export default function LandingPage() {
   }, [competitions, refreshCompetitions]);
 
   useEffect(() => {
-    setCompetitions((prev) => mergeSavedState(prev, isAuthenticated ? savedIds : new Set()));
-  }, [isAuthenticated, savedIds]);
+    setCompetitions((prev) => mergeSavedState(prev, savedIds, { isAuthenticated }));
+  }, [authSessionKey, isAuthenticated, savedIds]);
 
   useEffect(() => {
     if (!isAuthenticated) {
       setSidebarData(null);
       setSavedIds(new Set());
+      setCompetitions((prev) => mergeSavedState(prev, new Set(), { isAuthenticated: false }));
       return;
     }
 
     let cancelled = false;
+    const requestAuthKey = authSessionKey;
     setSidebarData(null);
     setSavedIds(new Set());
-    fetchSidebar()
-      .then((data) => {
-        if (cancelled) return;
+    setCompetitions((prev) => mergeSavedState(prev, new Set(), { isAuthenticated: false }));
+    Promise.all([fetchSidebar(), fetchSavedCompetitions()])
+      .then(([data, savedRecords]) => {
+        if (cancelled || requestAuthKey !== authSessionKey) return;
         const savedList = (data?.saved_competitions || []).slice(0, 6);
+        const nextSavedIds = new Set(
+          (savedRecords || [])
+            .map((record) => record?.competition?.id)
+            .filter(Boolean)
+        );
         setSidebarData({
           ...data,
-          saved_competitions: savedList,
+          saved_competitions: savedList.map((item) => ({ ...item, is_saved: true })),
         });
-        setSavedIds(new Set(savedList.map((item) => item.id)));
+        setSavedIds(nextSavedIds);
       })
       .catch(console.error);
     return () => {

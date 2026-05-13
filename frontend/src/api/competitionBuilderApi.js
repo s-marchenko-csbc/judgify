@@ -50,6 +50,30 @@ export function fetchCompetitionMaterials(id) {
   return apiRequest(`/competition-builder/${id}/materials/`);
 }
 
+export function fetchCompetitionAnnouncements(id) {
+  return apiRequest(`/competitions/${id}/announcements/`);
+}
+
+export function createCompetitionAnnouncement(id, payload = {}) {
+  return apiRequest(`/competitions/${id}/announcements/`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateCompetitionAnnouncement(id, payload = {}) {
+  return apiRequest(`/competitions/${id}/announcements/`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteCompetitionAnnouncement(id, announcementId) {
+  return apiRequest(`/competitions/${id}/announcements/?id=${encodeURIComponent(announcementId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function uploadCompetitionMaterial(id, payload) {
   return apiRequest(`/competition-builder/${id}/materials/`, {
     method: "POST",

@@ -33,8 +33,11 @@ function getStatusClass(status) {
   return map[status] || "status-default";
 }
 
-function mergeSavedState(items, savedIds) {
-  return (items || []).map((item) => ({ ...item, is_saved: savedIds.has(item.id) || Boolean(item.is_saved) }));
+function mergeSavedState(items, savedIds, { isAuthenticated = true, trustItemState = true } = {}) {
+  return (items || []).map((item) => ({
+    ...item,
+    is_saved: isAuthenticated && (savedIds.has(item.id) || (trustItemState && Boolean(item.is_saved))),
+  }));
 }
 
 function LastCompetitionBanner({ item, t }) {
@@ -379,7 +382,7 @@ function ProfileEditForm({ user, onSave, t }) {
 
 export default function ProfilePage() {
   const navigate = useNavigate();
-  const { user, loading, isAuthenticated, updateProfile } = useAuth();
+  const { user, loading, isAuthenticated, authSessionKey, updateProfile } = useAuth();
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState("overview");
   const [editing, setEditing] = useState(false);
@@ -421,10 +424,32 @@ export default function ProfilePage() {
   };
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated) {
+      setSavedIds(new Set());
+      setSavedCompetitions([]);
+      setRecentlyViewed([]);
+      setDraftCompetitions([]);
+      setPendingRequests([]);
+      setActiveCompetitions([]);
+      setArchivedCompetitions([]);
+      setTeams([]);
+      setProfileStats(null);
+      setProfileBadges([]);
+      setProfileCertificates([]);
+      setProfileMaterials([]);
+      setJudgeWork([]);
+      setNotifications([]);
+      return;
+    }
     let cancelled = false;
+    const requestAuthKey = authSessionKey;
+    setSavedIds(new Set());
+    setSavedCompetitions([]);
+    setRecentlyViewed([]);
+    setActiveCompetitions([]);
+    setArchivedCompetitions([]);
     fetchProfileDashboard().then((dashboard) => {
-      if (cancelled) return;
+      if (cancelled || requestAuthKey !== authSessionKey) return;
       const ids = new Set((dashboard?.saved_competitions || []).map((item) => item.id));
       setSavedIds(ids);
       setSavedCompetitions(mergeSavedState(dashboard?.saved_competitions || [], ids));
@@ -442,13 +467,23 @@ export default function ProfilePage() {
       setNotifications(dashboard?.notifications || []);
     }).catch(console.error);
     return () => { cancelled = true; };
-  }, [isAuthenticated]);
+  }, [authSessionKey, isAuthenticated]);
 
-  const handleSavedChange = (competitionId, nextSaved) => {
+  const handleSavedChange = (competitionId, nextSaved, sourceItem = null) => {
     setSavedIds((prev) => { const next = new Set(prev); if (nextSaved) next.add(competitionId); else next.delete(competitionId); return next; });
     const patch = (items) => items.map((competition) => competition.id === competitionId ? { ...competition, is_saved: nextSaved } : competition);
     setRecentlyViewed(patch);
-    setSavedCompetitions(patch);
+    setSavedCompetitions((prev) => {
+      if (nextSaved) {
+        const knownCompetition = sourceItem || [...prev, ...recentlyViewed, ...activeCompetitions, ...archivedCompetitions].find((competition) => competition.id === competitionId);
+        if (!knownCompetition) return patch(prev);
+        return [
+          { ...knownCompetition, id: competitionId, is_saved: true },
+          ...prev.filter((competition) => competition.id !== competitionId),
+        ].slice(0, 12);
+      }
+      return prev.filter((competition) => competition.id !== competitionId);
+    });
     setActiveCompetitions(patch);
     setArchivedCompetitions(patch);
   };

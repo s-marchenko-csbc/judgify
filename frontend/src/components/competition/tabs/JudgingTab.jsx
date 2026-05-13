@@ -12,6 +12,12 @@ function optionLabel(t, group, value) {
   return t(`options.${group}.${value}`, { defaultValue: String(value || "").replaceAll("_", " ") });
 }
 
+function submissionStatusLabel(t, status) {
+  if (status === "accepted") return t("judgingTab.submitted", { defaultValue: "Submitted" });
+  if (status === "locked") return t("judgingTab.locked", { defaultValue: "Locked" });
+  return optionLabel(t, "status", status);
+}
+
 function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
   const { t } = useLanguage();
   const openSubmissionRounds = useMemo(() => {
@@ -22,11 +28,15 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
     return rounds.filter((round, index) => index + 1 === currentRound && round.submission_required !== false);
   }, [competition.current_round, competition.rounds]);
   const canSubmit =
+    competition.status === "active" &&
     competition.user_participation_status === "approved" &&
     ["participant", "team_member"].includes(competition.user_participation_role) &&
     competition.submissions_open &&
     openSubmissionRounds.length > 0;
   const mySubmissions = judging?.my_submissions || [];
+  const submissionSettings = competition.submission_settings || {};
+  const submissionMode = submissionSettings.submission_mode || "mixed";
+  const submissionPolicy = submissionSettings.submission_policy || "single";
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -38,6 +48,16 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const selectedRoundId = form.round_id || (openSubmissionRounds[0]?.id ? String(openSubmissionRounds[0].id) : "");
+  const existingForSelectedRound = useMemo(
+    () => mySubmissions.find((item) => String(item.round) === String(selectedRoundId) && item.status !== "rejected"),
+    [mySubmissions, selectedRoundId]
+  );
+  const isUpdating = Boolean(existingForSelectedRound && submissionPolicy !== "multiple");
+  const showDescription = submissionMode === "mixed" || submissionMode === "text_answer" || submissionSettings.description_required;
+  const showRepository = submissionMode === "mixed" || submissionMode === "repository_link" || submissionSettings.repository_url_required;
+  const showDemo = submissionMode === "mixed" || submissionMode === "demo_link" || submissionSettings.demo_url_required;
+  const showFile = submissionMode === "mixed" || submissionMode === "file_upload";
 
   const updateField = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
 
@@ -49,6 +69,18 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
         : { ...prev, round_id: String(openSubmissionRounds[0].id) }
     ));
   }, [openSubmissionRounds]);
+
+  useEffect(() => {
+    if (!existingForSelectedRound || submissionPolicy === "multiple") return;
+    setForm((prev) => ({
+      ...prev,
+      title: existingForSelectedRound.title || "",
+      description: existingForSelectedRound.description || "",
+      repository_url: existingForSelectedRound.repository_url || "",
+      demo_url: existingForSelectedRound.demo_url || "",
+      file: null,
+    }));
+  }, [existingForSelectedRound, submissionPolicy]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -96,7 +128,7 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
             <div key={item.id} className="submission-row">
               <div>
                 <strong>{item.title || item.round_title || t("judgingTab.submissionFallback")}</strong>
-                <small>{item.round_title} - {optionLabel(t, "status", item.status)}</small>
+                <small>{item.round_title} - {submissionStatusLabel(t, item.status)}</small>
               </div>
               <span>
                 {item.file?.url ? (
@@ -127,25 +159,38 @@ function SubmissionPanel({ competition, judging, onSubmissionCreate }) {
             onChange={(event) => updateField("description", event.target.value)}
             placeholder={t("judgingTab.formDescription")}
             rows="3"
+            hidden={!showDescription}
           />
-          <input
-            value={form.repository_url}
-            onChange={(event) => updateField("repository_url", event.target.value)}
-            placeholder={t("judgingTab.repositoryUrl")}
-          />
-          <input
-            value={form.demo_url}
-            onChange={(event) => updateField("demo_url", event.target.value)}
-            placeholder={t("judgingTab.demoUrl")}
-          />
-          <input
-            key={fileInputKey}
-            type="file"
-            onChange={(event) => updateField("file", event.target.files?.[0] || null)}
-            aria-label={t("judgingTab.fileUpload", { defaultValue: "Attach file" })}
-          />
+          {showRepository && (
+            <input
+              value={form.repository_url}
+              onChange={(event) => updateField("repository_url", event.target.value)}
+              placeholder={t("judgingTab.repositoryUrl")}
+            />
+          )}
+          {showDemo && (
+            <input
+              value={form.demo_url}
+              onChange={(event) => updateField("demo_url", event.target.value)}
+              placeholder={t("judgingTab.demoUrl")}
+            />
+          )}
+          {showFile && (
+            <input
+              key={fileInputKey}
+              type="file"
+              onChange={(event) => updateField("file", event.target.files?.[0] || null)}
+              aria-label={t("judgingTab.fileUpload", { defaultValue: "Attach file" })}
+            />
+          )}
           <div className="scorecard-actions">
-            <button type="submit" disabled={saving}>{saving ? t("judgingTab.sending") : t("judgingTab.submitWork")}</button>
+            <button type="submit" disabled={saving}>
+              {saving
+                ? t("judgingTab.sending")
+                : isUpdating
+                  ? t("judgingTab.updateSubmission", { defaultValue: "Update submission" })
+                  : t("judgingTab.submitWork")}
+            </button>
             {message && <span>{message}</span>}
           </div>
         </form>

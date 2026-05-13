@@ -109,6 +109,9 @@ class OutboundMessageSerializer(serializers.ModelSerializer):
 
 
 class CompetitionBuilderSerializer(serializers.ModelSerializer):
+    ROUND_ACTIVITY_LOCKED_FIELDS = {"submission_required", "max_attempts", "sort_order"}
+    SCORED_CRITERION_LOCKED_FIELDS = {"judging_mode", "max_score", "weight"}
+
     rounds = CompetitionRoundSerializer(many=True, required=False)
     submission_settings = CompetitionSubmissionSettingsSerializer(required=False)
     judging_criteria = CompetitionJudgingCriterionSerializer(many=True, required=False)
@@ -251,6 +254,14 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
                 item.setdefault("sort_order", index)
                 if round_id and round_id in existing_rounds:
                     round_obj = existing_rounds[round_id]
+                    locked_changes = self._locked_round_changes(round_obj, item)
+                    if locked_changes:
+                        raise serializers.ValidationError({
+                            "rounds": (
+                                f"Cannot change {', '.join(locked_changes)} for started rounds "
+                                "or rounds with submissions, scores, or judge assignments."
+                            )
+                        })
                     for key, value in item.items():
                         setattr(round_obj, key, value)
                     round_obj.save()
@@ -297,6 +308,13 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
                 item.setdefault("sort_order", index)
                 if criterion_id and criterion_id in existing_criteria:
                     criterion = existing_criteria[criterion_id]
+                    locked_changes = self._locked_criterion_changes(criterion, item)
+                    if locked_changes:
+                        raise serializers.ValidationError({
+                            "judging_criteria": (
+                                f"Cannot change {', '.join(locked_changes)} for criteria that already have scores."
+                            )
+                        })
                     for key, value in item.items():
                         setattr(criterion, key, value)
                     criterion.save()
@@ -335,6 +353,30 @@ class CompetitionBuilderSerializer(serializers.ModelSerializer):
             for award_id, award in existing_awards.items():
                 if award_id not in seen_award_ids:
                     award.delete()
+
+    def _locked_round_changes(self, round_obj, incoming):
+        has_activity = (
+            (round_obj.starts_at and round_obj.starts_at <= timezone.now())
+            or round_obj.submissions.exists()
+            or round_obj.scores.exists()
+            or round_obj.judge_assignments.exists()
+        )
+        if not has_activity:
+            return []
+        changes = []
+        for field in self.ROUND_ACTIVITY_LOCKED_FIELDS:
+            if field in incoming and getattr(round_obj, field) != incoming[field]:
+                changes.append(field)
+        return changes
+
+    def _locked_criterion_changes(self, criterion, incoming):
+        if not criterion.scores.exists():
+            return []
+        changes = []
+        for field in self.SCORED_CRITERION_LOCKED_FIELDS:
+            if field in incoming and getattr(criterion, field) != incoming[field]:
+                changes.append(field)
+        return changes
 
 
 class CompetitionMaterialSerializer(serializers.ModelSerializer):
@@ -454,6 +496,8 @@ class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "competition",
+            "author",
             "author_name",
             "created_at",
             "comments",
@@ -1018,6 +1062,7 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
     rounds = CompetitionRoundSerializer(many=True, read_only=True)
     materials = CompetitionMaterialSerializer(many=True, read_only=True)
     planned_events = CompetitionPlannedEventSerializer(many=True, read_only=True)
+    submission_settings = CompetitionSubmissionSettingsSerializer(read_only=True)
 
     class Meta:
         model = Competition
@@ -1075,6 +1120,7 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "results_public_at",
             "timer_deadline",
             "rounds",
+            "submission_settings",
             "materials",
             "planned_events",
             "is_saved",
@@ -1102,6 +1148,7 @@ class CompetitionDetailSerializer(serializers.ModelSerializer):
             "followers_count",
             "trending_score",
             "materials",
+            "submission_settings",
             "planned_events",
             "is_saved",
             "is_watching",

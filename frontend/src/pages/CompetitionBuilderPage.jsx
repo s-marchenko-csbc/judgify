@@ -5,14 +5,18 @@ import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 import {
   assignCompetitionJudge,
+  createCompetitionAnnouncement,
   createCompetitionDraft,
   createCompetitionInvitations,
+  deleteCompetitionAnnouncement,
   deleteCompetitionMaterial,
+  fetchCompetitionAnnouncements,
   fetchCompetitionBuilder,
   fetchCompetitionJudges,
   fetchCompetitionMaterials,
   publishCompetition,
   saveCompetitionBuilder,
+  updateCompetitionAnnouncement,
   uploadCompetitionMaterial,
 } from "../api/competitionBuilderApi";
 import { getMaterialBadge, getMaterialMeta, getMaterialTitle, getMaterialUrl } from "../utils/materials";
@@ -328,6 +332,11 @@ export default function CompetitionBuilderPage() {
   const [teamInviteText, setTeamInviteText] = useState("");
   const [judgeText, setJudgeText] = useState("");
   const [judges, setJudges] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [announcementId, setAnnouncementId] = useState(null);
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementText, setAnnouncementText] = useState("");
+  const [announcementPinned, setAnnouncementPinned] = useState(false);
   const [materialFile, setMaterialFile] = useState(null);
   const [materialName, setMaterialName] = useState("");
   const [materialUrl, setMaterialUrl] = useState("");
@@ -341,10 +350,11 @@ export default function CompetitionBuilderPage() {
       fetchCompetitionBuilder(id).then((data) => {
         setDraft(normalizeDraft(data));
         setStep(data.setup_step || 1);
-        return Promise.all([fetchCompetitionJudges(id), fetchCompetitionMaterials(id)]);
-      }).then(([judgeItems, materialItems]) => {
+        return Promise.all([fetchCompetitionJudges(id), fetchCompetitionMaterials(id), fetchCompetitionAnnouncements(id)]);
+      }).then(([judgeItems, materialItems, announcementItems]) => {
         if (judgeItems) setJudges(judgeItems);
         if (materialItems) setDraft((prev) => ({ ...prev, materials: materialItems }));
+        if (announcementItems) setAnnouncements(announcementItems);
       }).catch((error) => setStatusText(error.message));
     } else {
       if (draftCreationStartedRef.current) return;
@@ -352,9 +362,10 @@ export default function CompetitionBuilderPage() {
       createCompetitionDraft(preparePayload(localizedDefaultDraft, 1)).then((data) => {
         setCompetitionId(data.id);
         setDraft(normalizeDraft(data));
-        return Promise.all([fetchCompetitionJudges(data.id), fetchCompetitionMaterials(data.id)]).then(([judgeItems, materialItems]) => {
+        return Promise.all([fetchCompetitionJudges(data.id), fetchCompetitionMaterials(data.id), fetchCompetitionAnnouncements(data.id)]).then(([judgeItems, materialItems, announcementItems]) => {
           setJudges(judgeItems || []);
           setDraft((prev) => ({ ...prev, materials: materialItems || [] }));
+          setAnnouncements(announcementItems || []);
           return data;
         });
       }).then((data) => {
@@ -368,8 +379,12 @@ export default function CompetitionBuilderPage() {
 
   const setField = (field, value) => setDraft((prev) => {
     const next = { ...prev, [field]: value };
-    if (field === "starts_at" && !prev.judging_starts_at) next.judging_starts_at = value;
-    if (field === "ends_at" && !prev.judging_ends_at) next.judging_ends_at = value;
+    if (field === "starts_at" && (!prev.judging_starts_at || prev.judging_starts_at === prev.starts_at)) {
+      next.judging_starts_at = value;
+    }
+    if (field === "ends_at" && (!prev.judging_ends_at || prev.judging_ends_at === prev.ends_at)) {
+      next.judging_ends_at = value;
+    }
     if (field === "starts_at" || field === "ends_at") {
       next.rounds = normalizeRoundSequence(next.rounds || [], next.starts_at);
     }
@@ -378,10 +393,15 @@ export default function CompetitionBuilderPage() {
   const setNested = (section, field, value) => setDraft((prev) => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
 
   const updateArrayItem = (section, index, field, value) => {
-    setDraft((prev) => ({
-      ...prev,
-      [section]: prev[section].map((item, i) => i === index ? { ...item, [field]: value } : item),
-    }));
+    setDraft((prev) => {
+      const nextItems = prev[section].map((item, i) => i === index ? { ...item, [field]: value } : item);
+      return {
+        ...prev,
+        [section]: section === "rounds" && ["starts_at", "ends_at"].includes(field)
+          ? normalizeRoundSequence(nextItems, prev.starts_at)
+          : nextItems,
+      };
+    });
   };
 
   const addArrayItem = (section, item) => {
@@ -522,6 +542,61 @@ export default function CompetitionBuilderPage() {
     }
   };
 
+  const resetAnnouncementForm = () => {
+    setAnnouncementId(null);
+    setAnnouncementTitle("");
+    setAnnouncementText("");
+    setAnnouncementPinned(false);
+  };
+
+  const refreshAnnouncements = async () => {
+    if (!competitionId) return;
+    const items = await fetchCompetitionAnnouncements(competitionId);
+    setAnnouncements(items || []);
+  };
+
+  const saveAnnouncement = async () => {
+    if (!competitionId || !announcementTitle.trim() || !announcementText.trim()) return;
+    const payload = {
+      id: announcementId,
+      title: announcementTitle.trim(),
+      text: announcementText.trim(),
+      is_pinned: announcementPinned,
+    };
+    try {
+      if (announcementId) {
+        await updateCompetitionAnnouncement(competitionId, payload);
+        setStatusText(t("builder.status.saved"));
+      } else {
+        await createCompetitionAnnouncement(competitionId, payload);
+        setStatusText(t("builder.status.saved"));
+      }
+      resetAnnouncementForm();
+      await refreshAnnouncements();
+    } catch (error) {
+      setStatusText(error.message || t("builder.status.notSaved"));
+    }
+  };
+
+  const editAnnouncement = (announcement) => {
+    setAnnouncementId(announcement.id);
+    setAnnouncementTitle(announcement.title || "");
+    setAnnouncementText(announcement.text || "");
+    setAnnouncementPinned(Boolean(announcement.is_pinned));
+  };
+
+  const removeAnnouncement = async (idToRemove) => {
+    if (!competitionId || !idToRemove) return;
+    try {
+      await deleteCompetitionAnnouncement(competitionId, idToRemove);
+      if (announcementId === idToRemove) resetAnnouncementForm();
+      await refreshAnnouncements();
+      setStatusText(t("builder.status.saved"));
+    } catch (error) {
+      setStatusText(error.message || t("builder.status.notSaved"));
+    }
+  };
+
   if (loading) return <div className="builder-page"><main className="builder-shell">{t("builder.loading")}</main></div>;
   if (!isAuthenticated) return <Navigate to="/" replace />;
 
@@ -634,6 +709,13 @@ export default function CompetitionBuilderPage() {
                     <input value={round.title} onChange={(e) => updateArrayItem("rounds", index, "title", e.target.value)} placeholder={t("builder.roundTitle")} />
                     <input type="datetime-local" value={round.starts_at || ""} onChange={(e) => updateArrayItem("rounds", index, "starts_at", e.target.value)} title={t("builder.roundTimeTitle")} />
                     <input type="datetime-local" value={round.ends_at || ""} onChange={(e) => updateArrayItem("rounds", index, "ends_at", e.target.value)} />
+                    <input
+                      type="number"
+                      min="1"
+                      value={round.max_attempts || 1}
+                      onChange={(e) => updateArrayItem("rounds", index, "max_attempts", Math.max(1, Number(e.target.value) || 1))}
+                      placeholder={t("builder.maxAttempts", { defaultValue: "Max attempts" })}
+                    />
                     <label className="builder-round-check"><input type="checkbox" checked={Boolean(round.submission_required)} onChange={(e) => updateArrayItem("rounds", index, "submission_required", e.target.checked)} /> {t("builder.submissionRequired")}</label>
                     <label className="builder-round-check"><input type="checkbox" checked={Boolean(round.is_stream_enabled)} onChange={(e) => updateArrayItem("rounds", index, "is_stream_enabled", e.target.checked)} /> {t("builder.showVideo")}</label>
                     {round.is_stream_enabled && (
@@ -660,6 +742,7 @@ export default function CompetitionBuilderPage() {
                 <h2>{t("builder.submissionSettings")}</h2>
                 <div className="builder-form-grid">
                   <Field label={t("builder.submissionMode")}><select value={draft.submission_settings.submission_mode} onChange={(e) => setNested("submission_settings", "submission_mode", e.target.value)}><option value="file_upload">{t("options.submission_mode.file_upload")}</option><option value="text_answer">{t("options.submission_mode.text_answer")}</option><option value="repository_link">{t("options.submission_mode.repository_link")}</option><option value="demo_link">{t("options.submission_mode.demo_link")}</option><option value="mixed">{t("options.submission_mode.mixed")}</option></select></Field>
+                  <Field label={t("builder.submissionPolicy", { defaultValue: "Submission policy" })}><select value={draft.submission_settings.submission_policy || "single"} onChange={(e) => setNested("submission_settings", "submission_policy", e.target.value)}><option value="single">{t("options.submission_policy.single", { defaultValue: "Single submission" })}</option><option value="latest">{t("options.submission_policy.latest", { defaultValue: "Latest submission wins" })}</option><option value="multiple">{t("options.submission_policy.multiple", { defaultValue: "Multiple submissions" })}</option></select></Field>
                   <Field label={t("builder.maxFileSize")}><input type="number" value={draft.submission_settings.max_file_size_mb} onChange={(e) => setNested("submission_settings", "max_file_size_mb", Number(e.target.value))} /></Field>
                   <Field label={t("builder.maxSubmissions")}><input type="number" value={draft.submission_settings.max_submissions} onChange={(e) => setNested("submission_settings", "max_submissions", Number(e.target.value))} /></Field>
                   <CheckField label={t("builder.repositoryRequired")} checked={draft.submission_settings.repository_url_required} onChange={(value) => setNested("submission_settings", "repository_url_required", value)} />
@@ -695,8 +778,21 @@ export default function CompetitionBuilderPage() {
                 )}
 
                 <h2>{t("builder.criteria")}</h2>
-                {draft.judging_criteria.map((criterion, index) => <div className="builder-inline-card" key={index}><input value={criterion.title} onChange={(e) => updateArrayItem("judging_criteria", index, "title", e.target.value)} /><input type="number" value={criterion.max_score} onChange={(e) => updateArrayItem("judging_criteria", index, "max_score", Number(e.target.value))} /><input type="number" step="0.1" value={criterion.weight} onChange={(e) => updateArrayItem("judging_criteria", index, "weight", Number(e.target.value))} /></div>)}
-                <button type="button" onClick={() => addArrayItem("judging_criteria", { title: t("builder.defaults.newCriterion"), description: "", max_score: 10, weight: 1 })}>+ {t("builder.addCriterion")}</button>
+                {draft.judging_criteria.map((criterion, index) => (
+                  <div className="builder-inline-card" key={index}>
+                    <input value={criterion.title} onChange={(e) => updateArrayItem("judging_criteria", index, "title", e.target.value)} placeholder={t("builder.criterionTitle", { defaultValue: "Criterion title" })} />
+                    <select value={criterion.judging_mode || "manual"} onChange={(e) => updateArrayItem("judging_criteria", index, "judging_mode", e.target.value)}>
+                      <option value="manual">{t("options.review_type.manual", { defaultValue: "Manual" })}</option>
+                      <option value="automatic">{t("options.review_type.automatic", { defaultValue: "Automatic" })}</option>
+                      <option value="peer_review">{t("options.review_type.peer_review", { defaultValue: "Peer review" })}</option>
+                      <option value="mixed">{t("options.review_type.mixed", { defaultValue: "Mixed" })}</option>
+                    </select>
+                    <input type="number" min="1" value={criterion.max_score} onChange={(e) => updateArrayItem("judging_criteria", index, "max_score", Math.max(1, Number(e.target.value) || 1))} />
+                    <input type="number" min="0" step="0.1" value={criterion.weight} onChange={(e) => updateArrayItem("judging_criteria", index, "weight", Math.max(0, Number(e.target.value) || 0))} />
+                    <textarea value={criterion.description || ""} onChange={(e) => updateArrayItem("judging_criteria", index, "description", e.target.value)} placeholder={t("builder.criterionDescription", { defaultValue: "Criterion description" })} />
+                  </div>
+                ))}
+                <button type="button" onClick={() => addArrayItem("judging_criteria", { title: t("builder.defaults.newCriterion"), description: "", judging_mode: "manual", max_score: 10, weight: 1 })}>+ {t("builder.addCriterion")}</button>
 
                 <h2>{t("builder.jury")}</h2>
                 <div className="builder-form-grid">
@@ -731,6 +827,28 @@ export default function CompetitionBuilderPage() {
                   </div>
                   <button type="button" onClick={() => queueInvitations("individual")}>{t("builder.queueIndividual")}</button>
                   <button type="button" onClick={() => queueInvitations("team")}>{t("builder.queueTeam")}</button>
+                </section>
+                <section className="builder-invites">
+                  <h2>{t("overviewTab.announcements", { defaultValue: "Announcements" })}</h2>
+                  <div className="builder-form-grid">
+                    <Field label={t("builder.announcementTitle", { defaultValue: "Announcement title" })}><input value={announcementTitle} onChange={(e) => setAnnouncementTitle(e.target.value)} /></Field>
+                    <CheckField label={t("builder.announcementPinned", { defaultValue: "Pinned" })} checked={announcementPinned} onChange={setAnnouncementPinned} />
+                    <Field label={t("builder.announcementText", { defaultValue: "Announcement text" })}><textarea value={announcementText} onChange={(e) => setAnnouncementText(e.target.value)} /></Field>
+                  </div>
+                  <button type="button" onClick={saveAnnouncement}>{announcementId ? t("builder.saveFinal") : t("builder.addAnnouncement", { defaultValue: "Add announcement" })}</button>
+                  {announcementId && <button type="button" onClick={resetAnnouncementForm}>{t("auth.close", { defaultValue: "Cancel" })}</button>}
+                  {announcements.length > 0 && (
+                    <div className="builder-inline-card">
+                      {announcements.map((announcement) => (
+                        <span className="builder-material-row" key={announcement.id}>
+                          <strong>{announcement.is_pinned ? "PIN" : "MSG"}</strong>
+                          <span>{announcement.title}</span>
+                          <button type="button" onClick={() => editAnnouncement(announcement)}>{t("builder.edit", { defaultValue: "Edit" })}</button>
+                          <button type="button" onClick={() => removeAnnouncement(announcement.id)}>{t("builder.remove")}</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </section>
                 <button className="builder-publish-btn" type="button" onClick={handlePublish} disabled={validation.length > 0 || !canPublishFromApproval}>{t("builder.publishCompetition")}</button>
               </div>

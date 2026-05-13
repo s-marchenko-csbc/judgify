@@ -5,14 +5,15 @@ import { useLanguage } from "../../context/LanguageContext";
 function getJoinState(competition, currentUser, t) {
   const role = currentUser?.primaryRole;
   if (currentUser && role !== "participant") return null;
+  const canShowJoin = ["upcoming", "registration_open", "active"].includes(competition?.status) && competition?.registration_open;
 
   const status = competition?.user_participation_status || "none";
   const team = competition?.user_team?.name ? ` - ${competition.user_team.name}` : "";
 
   if (status === "approved") return { label: `${t("competitionHeader.alreadyParticipating")}${team}`, disabled: true, className: "joined" };
   if (status === "pending") return { label: `${t("competitionHeader.pendingReview")}${team}`, disabled: true, className: "pending" };
+  if (!canShowJoin || competition?.can_join === false) return null;
   if (status === "rejected") return { label: t("competitionHeader.requestRejected"), disabled: false, className: "rejected" };
-  if (competition?.can_join === false) return null;
   return { label: t("competitionHeader.join"), disabled: false, className: "" };
 }
 

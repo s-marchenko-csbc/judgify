@@ -120,10 +120,25 @@ def recompute_competition_timing(competition, now=None, save=True):
     not during the whole competition window.
     """
     if competition.status in ["draft", "archived"]:
+        changed = []
+        if competition.registration_open:
+            competition.registration_open = False
+            changed.append("registration_open")
+        if competition.submissions_open:
+            competition.submissions_open = False
+            changed.append("submissions_open")
+        if competition.timer_deadline:
+            competition.timer_deadline = None
+            changed.append("timer_deadline")
+        if save and changed:
+            competition.save(update_fields=[*changed, "updated_at"])
         return competition
 
     now = now or timezone.now()
     rounds = list(competition.rounds.all().order_by("sort_order", "starts_at", "id"))
+    first_round_start = min([round_obj.starts_at for round_obj in rounds if round_obj.starts_at], default=None)
+    all_rounds_finished = bool(rounds) and all(round_obj.ends_at and now > round_obj.ends_at for round_obj in rounds)
+    any_round_started = any(round_obj.starts_at and now >= round_obj.starts_at for round_obj in rounds)
 
     registration_open = False
     if competition.registration_starts_at and competition.registration_ends_at:
@@ -166,31 +181,42 @@ def recompute_competition_timing(competition, now=None, save=True):
         # to become active even if their dates overlap by mistake.
         blocked_by_previous = True
 
-    submissions_open = bool(active_round and active_round[1].submission_required)
-
+    results_published = bool(competition.results_public_at and now >= competition.results_public_at)
     judging_is_open = (
-        competition.judging_starts_at
-        and competition.judging_ends_at
-        and competition.judging_starts_at <= now <= competition.judging_ends_at
+        not results_published
+        and bool(competition.judging_starts_at or competition.judging_ends_at)
+        and (not competition.judging_starts_at or now >= competition.judging_starts_at)
+        and (not competition.judging_ends_at or now <= competition.judging_ends_at)
     )
 
-    if competition.status == "judging" and judging_is_open:
+    if results_published:
+        status_value = "finished"
+    elif judging_is_open:
         status_value = "judging"
+    elif active_round:
+        status_value = "active"
+    elif rounds and first_round_start and now < first_round_start:
+        status_value = "registration_open" if registration_open else "upcoming"
+    elif rounds and all_rounds_finished:
+        status_value = "finished"
+    elif rounds and (any_round_started or (competition.starts_at and now >= competition.starts_at)):
+        status_value = "active"
     elif competition.starts_at and now < competition.starts_at:
         status_value = "registration_open" if registration_open else "upcoming"
     elif competition.starts_at and competition.ends_at and competition.starts_at <= now <= competition.ends_at:
         status_value = "active"
-    elif judging_is_open:
-        status_value = "judging"
     elif competition.ends_at and now > competition.ends_at:
-        if competition.judging_starts_at and now < competition.judging_starts_at:
-            status_value = "judging"
-        elif competition.judging_ends_at and now <= competition.judging_ends_at:
-            status_value = "judging"
-        else:
-            status_value = "finished"
+        status_value = "finished"
     else:
-        status_value = competition.status or "upcoming"
+        status_value = competition.status if competition.status in ["active", "judging", "finished"] else ("registration_open" if registration_open else "upcoming")
+
+    submissions_open = bool(status_value == "active" and active_round and active_round[1].submission_required)
+
+    if status_value == "finished":
+        for round_obj in rounds:
+            if round_obj.ends_at and now > round_obj.ends_at and round_obj.status != "judged":
+                round_obj.status = "judged"
+                round_status_updates.append(round_obj)
 
     round_deadline = None
     if active_round:
@@ -231,7 +257,7 @@ def recompute_competition_timing(competition, now=None, save=True):
             "current_round", "total_rounds", "trending_score", "updated_at",
         ])
         if round_status_updates:
-            CompetitionRound.objects.bulk_update(round_status_updates, ["status"])
+            CompetitionRound.objects.bulk_update(list({round_obj.id: round_obj for round_obj in round_status_updates}.values()), ["status"])
         closed_round_ids = [round_obj.id for round_obj in rounds if round_obj.ends_at and now > round_obj.ends_at]
         if closed_round_ids:
             CompetitionSubmission.objects.filter(
@@ -1467,7 +1493,7 @@ class ToggleSavedCompetitionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
-        competition = get_object_or_404(Competition, pk=pk)
+        competition = get_object_or_404(Competition, pk=pk, is_public=True)
 
         UserSavedCompetition.objects.get_or_create(
             user=request.user,
@@ -1493,9 +1519,11 @@ class MySavedCompetitionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        saved_items = UserSavedCompetition.objects.filter(
-            user=request.user
-        ).select_related("competition")
+        saved_items = (
+            UserSavedCompetition.objects.filter(user=request.user, competition__is_public=True)
+            .select_related("competition")
+            .order_by("-created_at")
+        )
 
         serializer = UserSavedCompetitionSerializer(
             saved_items,
@@ -1581,6 +1609,42 @@ class CompetitionAnnouncementsView(APIView):
             many=True,
         )
         return Response(serializer.data)
+
+    def post(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot edit announcements for this competition."}, status=status.HTTP_403_FORBIDDEN)
+
+        payload = {
+            "competition": competition.id,
+            "title": (request.data.get("title") or "").strip(),
+            "text": (request.data.get("text") or "").strip(),
+            "is_pinned": bool(request.data.get("is_pinned", False)),
+        }
+        serializer = CompetitionAnnouncementSerializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        announcement = serializer.save(author=request.user, competition=competition)
+        return Response(CompetitionAnnouncementSerializer(announcement).data, status=status.HTTP_201_CREATED)
+
+    def patch(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot edit announcements for this competition."}, status=status.HTTP_403_FORBIDDEN)
+
+        announcement = get_object_or_404(CompetitionAnnouncement, pk=request.data.get("id"), competition=competition)
+        serializer = CompetitionAnnouncementSerializer(announcement, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        announcement = serializer.save(competition=competition)
+        return Response(CompetitionAnnouncementSerializer(announcement).data)
+
+    def delete(self, request, pk):
+        competition = get_object_or_404(Competition, pk=pk)
+        if not user_can_edit_competition(request.user, competition):
+            return Response({"detail": "You cannot edit announcements for this competition."}, status=status.HTTP_403_FORBIDDEN)
+
+        announcement = get_object_or_404(CompetitionAnnouncement, pk=request.data.get("id") or request.query_params.get("id"), competition=competition)
+        announcement.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AddAnnouncementCommentView(APIView):
@@ -1987,27 +2051,58 @@ def score_visibility_allows_details(request, competition):
     return False
 
 
+def results_are_public(competition, now=None):
+    now = now or timezone.now()
+    if competition.results_public_at:
+        return now >= competition.results_public_at
+    if competition.judging_ends_at:
+        return now > competition.judging_ends_at
+    return competition.status in ["finished", "archived"]
+
+
+def user_can_view_results(user, competition):
+    if user and user.is_authenticated and user_can_edit_competition(user, competition):
+        return True
+    return results_are_public(competition)
+
+
+def result_subject_key(subject):
+    if subject.get("team_id"):
+        return f"team-{subject.get('team_id')}", "team"
+    if subject.get("participant_id"):
+        return f"participant-{subject.get('participant_id')}", "individual"
+    return subject.get("id"), "individual"
+
+
 def build_live_leaderboard(competition, request=None, limit=10, tables=None):
     tables = tables if tables is not None else build_round_score_tables(competition, request)
-    totals = {}
+    per_round_scores = {}
     for table in tables:
+        round_id = table.get("round", {}).get("id")
+        if not round_id:
+            continue
         for row in table.get("rows") or []:
             score = row.get("total_score")
             subject = row.get("subject") or {}
-            subject_id = (
-                f"team-{subject.get('team_id')}" if subject.get("team_id")
-                else f"participant-{subject.get('participant_id')}" if subject.get("participant_id")
-                else subject.get("id")
-            )
+            subject_id, entry_type = result_subject_key(subject)
             if score is None or not subject_id:
                 continue
-            entry = totals.setdefault(subject_id, {
-                "name": subject.get("title") or subject.get("name") or "Submission",
-                "score": Decimal("0"),
-                "entry_type": "team" if subject.get("type") == "team" or subject.get("team_id") else "individual",
-                "round_number": None,
+            bucket = per_round_scores.setdefault((subject_id, round_id), {
+                "name": subject.get("name") or subject.get("title") or "Submission",
+                "score": Decimal(str(score)),
+                "entry_type": entry_type,
             })
-            entry["score"] += Decimal(str(score))
+            bucket["score"] = max(bucket["score"], Decimal(str(score)))
+
+    totals = {}
+    for (subject_id, _round_id), item in per_round_scores.items():
+        entry = totals.setdefault(subject_id, {
+            "name": item["name"],
+            "score": Decimal("0"),
+            "entry_type": item["entry_type"],
+            "round_number": None,
+        })
+        entry["score"] += item["score"]
 
     ranked = sorted(totals.values(), key=lambda item: (-item["score"], item["name"]))[:limit]
     return [
@@ -2022,6 +2117,21 @@ def build_live_leaderboard(competition, request=None, limit=10, tables=None):
         }
         for index, item in enumerate(ranked, start=1)
     ]
+
+
+def latest_scoreable_submission(competition, round_obj, participant=None, team=None):
+    qs = CompetitionSubmission.objects.filter(
+        competition=competition,
+        round=round_obj,
+        status__in=["accepted", "locked"],
+    )
+    if team:
+        qs = qs.filter(team=team)
+    elif participant:
+        qs = qs.filter(participant=participant)
+    else:
+        return None
+    return qs.order_by("-updated_at", "-created_at", "-id").first()
 
 
 def build_round_score_tables(competition, request=None):
@@ -2179,6 +2289,42 @@ def user_submission_queryset(user, competition):
     return CompetitionSubmission.objects.filter(competition=competition, participant=membership)
 
 
+def submission_file_extension(uploaded_file):
+    name = normalize_upload_name(getattr(uploaded_file, "name", ""))
+    return os.path.splitext(name)[1].lower().lstrip(".")
+
+
+def validate_submission_content(settings_obj, description, repository_url, demo_url, uploaded_file, existing_submission=None):
+    has_existing_file = bool(existing_submission and existing_submission.file_id and not uploaded_file)
+    has_file = bool(uploaded_file or has_existing_file)
+    mode = settings_obj.submission_mode if settings_obj else "mixed"
+
+    if settings_obj:
+        if settings_obj.description_required and not description:
+            return "Submission description is required."
+        if settings_obj.repository_url_required and not repository_url:
+            return "Repository URL is required."
+        if settings_obj.demo_url_required and not demo_url:
+            return "Demo URL is required."
+        if uploaded_file and settings_obj.allowed_file_types:
+            extension = submission_file_extension(uploaded_file)
+            allowed = {str(item).lower().lstrip(".") for item in settings_obj.allowed_file_types if item}
+            if extension and extension not in allowed:
+                return f"File type .{extension} is not allowed for this competition."
+
+    if mode == "file_upload" and not has_file:
+        return "A file is required for this submission."
+    if mode == "text_answer" and not description:
+        return "Text answer is required for this submission."
+    if mode == "repository_link" and not repository_url:
+        return "Repository URL is required for this submission."
+    if mode == "demo_link" and not demo_url:
+        return "Demo URL is required for this submission."
+    if mode == "mixed" and not any([description, repository_url, demo_url, has_file]):
+        return "Add a description, repository URL, demo URL, or file before submitting."
+    return ""
+
+
 class CompetitionSubmissionsView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
@@ -2212,7 +2358,7 @@ class CompetitionSubmissionsView(APIView):
         round_obj, round_error = submission_round_for_request(competition, request.data)
         if round_error:
             return Response({"detail": round_error}, status=status.HTTP_400_BAD_REQUEST)
-        if not competition.submissions_open or not round_obj:
+        if competition.status != "active" or not competition.submissions_open or not round_obj:
             return Response({"detail": "Submissions are open only during the active submission round."}, status=status.HTTP_400_BAD_REQUEST)
 
         settings_obj = getattr(competition, "submission_settings", None)
@@ -2220,14 +2366,6 @@ class CompetitionSubmissionsView(APIView):
         description = (request.data.get("description") or "").strip()
         repository_url = (request.data.get("repository_url") or request.data.get("repositoryUrl") or "").strip()
         demo_url = (request.data.get("demo_url") or request.data.get("demoUrl") or "").strip()
-
-        if settings_obj:
-            if settings_obj.description_required and not description:
-                return Response({"detail": "Submission description is required."}, status=status.HTTP_400_BAD_REQUEST)
-            if settings_obj.repository_url_required and not repository_url:
-                return Response({"detail": "Repository URL is required."}, status=status.HTTP_400_BAD_REQUEST)
-            if settings_obj.demo_url_required and not demo_url:
-                return Response({"detail": "Demo URL is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         owner_filter = submission_owner_filter(membership)
         existing = CompetitionSubmission.objects.filter(
@@ -2238,16 +2376,27 @@ class CompetitionSubmissionsView(APIView):
 
         policy = settings_obj.submission_policy if settings_obj else "single"
         max_submissions = settings_obj.max_submissions if settings_obj else 1
-        if policy == "single" and existing.exists():
-            return Response({"detail": "This round accepts only one submission."}, status=status.HTTP_400_BAD_REQUEST)
-        if policy == "multiple" and existing.count() >= max_submissions:
+        round_max_attempts = max(1, round_obj.max_attempts or 1)
+        effective_max_submissions = min(max(1, max_submissions or 1), round_max_attempts)
+        existing_submission = existing.first() if policy in {"single", "latest"} else None
+        if existing.filter(status="locked").exists():
+            return Response({"detail": "Submission for this round is locked."}, status=status.HTTP_400_BAD_REQUEST)
+        if policy == "multiple" and existing.count() >= effective_max_submissions:
             return Response({"detail": "Maximum submissions for this round has been reached."}, status=status.HTTP_400_BAD_REQUEST)
-        if policy == "latest":
-            existing.exclude(status="locked").update(status="rejected")
 
         file_obj = None
         file_id = request.data.get("file") or request.data.get("file_id")
         uploaded_file = request.FILES.get("file")
+        content_error = validate_submission_content(
+            settings_obj,
+            description,
+            repository_url,
+            demo_url,
+            uploaded_file,
+            existing_submission=existing_submission,
+        )
+        if content_error:
+            return Response({"detail": content_error}, status=status.HTTP_400_BAD_REQUEST)
         if uploaded_file:
             if settings_obj and settings_obj.max_file_size_mb:
                 max_bytes = int(settings_obj.max_file_size_mb) * 1024 * 1024
@@ -2268,6 +2417,22 @@ class CompetitionSubmissionsView(APIView):
                 return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
         elif file_id:
             file_obj = get_object_or_404(UserFile, pk=file_id, owner=request.user)
+
+        if existing_submission:
+            existing_submission.submitted_by = request.user
+            existing_submission.title = title
+            existing_submission.description = description
+            existing_submission.repository_url = repository_url
+            existing_submission.demo_url = demo_url
+            if file_obj:
+                existing_submission.file = file_obj
+            existing_submission.status = "accepted"
+            existing_submission.locked_at = None
+            existing_submission.save(update_fields=[
+                "submitted_by", "title", "description", "repository_url", "demo_url",
+                "file", "status", "locked_at", "updated_at",
+            ])
+            return Response(CompetitionSubmissionSerializer(existing_submission, context={"request": request}).data)
 
         submission = CompetitionSubmission.objects.create(
             competition=competition,
@@ -2315,12 +2480,27 @@ class CompetitionResultsView(APIView):
             pk=pk,
             is_public=True,
         )
+        recompute_competition_timing(competition, save=True)
+
+        if not user_can_view_results(request.user, competition):
+            return Response(
+                {"detail": "Results are not public yet."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         round_history = CompetitionRoundResult.objects.filter(
             competition=competition
         ).order_by("round_number", "id")
 
         round_scores = build_round_score_tables(competition, request)
+        if not user_can_edit_competition(request.user, competition):
+            round_scores = [
+                {
+                    **table,
+                    "rows": [row for row in table.get("rows", []) if row.get("total_score") is not None],
+                }
+                for table in round_scores
+            ]
         live_leaderboard = build_live_leaderboard(competition, request, tables=round_scores)
         if not live_leaderboard:
             live_leaderboard = CompetitionLeaderboardEntrySerializer(
@@ -2348,8 +2528,12 @@ class ProfileDashboardView(APIView):
         profile = get_or_create_profile(user)
         role = profile.primary_role or "participant"
 
-        saved_ids = UserSavedCompetition.objects.filter(user=user).values_list("competition_id", flat=True)
-        saved = Competition.objects.filter(id__in=saved_ids, is_public=True).order_by("-saved_by_users__created_at")[:12]
+        saved_records = (
+            UserSavedCompetition.objects.filter(user=user, competition__is_public=True)
+            .select_related("competition")
+            .order_by("-created_at")[:12]
+        )
+        saved = [record.competition for record in saved_records]
 
         recent_records = RecentlyViewedCompetition.objects.filter(user=user, competition__is_public=True).select_related("competition").order_by("-viewed_at")[:12]
         recently_viewed = [record.competition for record in recent_records]
@@ -2529,7 +2713,7 @@ class ProfileDashboardView(APIView):
             "stats": {
                 "active": active.count(),
                 "pending": len(pending_requests),
-                "saved": UserSavedCompetition.objects.filter(user=user).count(),
+                "saved": UserSavedCompetition.objects.filter(user=user, competition__is_public=True).count(),
                 "archived": archived.count(),
                 "badges": UserBadge.objects.filter(user=user).count(),
                 "certificates": Certificate.objects.filter(user=user).count(),
@@ -2745,13 +2929,14 @@ class CompetitionDraftListCreateView(APIView):
         auto_approved = user_is_admin(request.user) or get_platform_setting(AUTO_APPROVE_ORGANIZER_SETTING, False)
         serializer = CompetitionBuilderSerializer(data=data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        competition = serializer.save()
-        if auto_approved:
-            competition.organizer_approval_status = "approved"
-            competition.organizer_approved_by = request.user if user_is_admin(request.user) else None
-            competition.organizer_approved_at = timezone.now()
-            competition.save(update_fields=["organizer_approval_status", "organizer_approved_by", "organizer_approved_at", "updated_at"])
-        ensure_organizer_membership(request.user, competition)
+        with transaction.atomic():
+            competition = serializer.save()
+            if auto_approved:
+                competition.organizer_approval_status = "approved"
+                competition.organizer_approved_by = request.user if user_is_admin(request.user) else None
+                competition.organizer_approved_at = timezone.now()
+                competition.save(update_fields=["organizer_approval_status", "organizer_approved_by", "organizer_approved_at", "updated_at"])
+            ensure_organizer_membership(request.user, competition)
         return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
@@ -2773,6 +2958,7 @@ class CompetitionBuilderDetailView(APIView):
         with transaction.atomic():
             competition = serializer.save()
             ensure_organizer_membership(request.user, competition)
+            recompute_competition_timing(competition, save=True)
         return Response(CompetitionBuilderSerializer(competition, context={"request": request}).data)
 
 
@@ -2849,7 +3035,7 @@ class CompetitionPublishView(APIView):
         # in the public catalog and detail routes.
         competition.status = "upcoming"
         competition.is_public = competition.visibility_mode == "public"
-        competition.show_in_catalog = competition.visibility_mode == "public"
+        competition.show_in_catalog = competition.visibility_mode == "public" and competition.show_in_catalog
         competition.publish_ready = True
         competition.completion_percent = 100
         competition.save(update_fields=["starts_at", "judging_starts_at", "judging_ends_at", "status", "is_public", "show_in_catalog", "publish_ready", "completion_percent", "updated_at"])
@@ -3277,6 +3463,14 @@ class CompetitionJudgingView(APIView):
         else:
             return Response({"detail": "Score subject is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        if not submission:
+            submission = latest_scoreable_submission(competition, round_obj, participant=participant, team=team)
+            if submission:
+                participant = submission.participant
+                team = submission.team
+            else:
+                return Response({"detail": "Selected work has no accepted submission for this round."}, status=status.HTTP_400_BAD_REQUEST)
+
         membership = user_competition_membership(request.user, competition)
         if review_type == "peer_review" and membership:
             if participant and participant.id == membership.id:
@@ -3294,9 +3488,22 @@ class CompetitionJudgingView(APIView):
             "subject_participant": participant,
             "subject_team": team,
         }
+        created_score = False
         try:
             with transaction.atomic():
-                score_obj, _ = CompetitionScore.objects.update_or_create(
+                if submission:
+                    legacy_lookup = {
+                        "competition": competition,
+                        "round": round_obj,
+                        "criterion": criterion,
+                        "judge": request.user,
+                        "review_type": review_type,
+                        "submission__isnull": True,
+                        "subject_participant": participant,
+                        "subject_team": team,
+                    }
+                    CompetitionScore.objects.filter(**legacy_lookup).update(submission=submission)
+                score_obj, created_score = CompetitionScore.objects.update_or_create(
                     **lookup,
                     defaults={
                         "score": score_value,
@@ -3326,7 +3533,7 @@ class CompetitionJudgingView(APIView):
             "round_scores": round_scores,
             "leaderboard": build_live_leaderboard(competition, request, tables=round_scores),
             "judge_workspace": build_judge_workspace(competition, request),
-        }, status=status.HTTP_201_CREATED)
+        }, status=status.HTTP_201_CREATED if created_score else status.HTTP_200_OK)
 
 
 class CompetitionScoreDetailView(APIView):
@@ -3341,6 +3548,8 @@ class CompetitionScoreDetailView(APIView):
             return Response({"detail": "Results are frozen for this competition."}, status=status.HTTP_400_BAD_REQUEST)
         if score_obj.judge_id != request.user.id and not user_can_edit_competition(request.user, score_obj.competition):
             return Response({"detail": "You can delete only your own score."}, status=status.HTTP_403_FORBIDDEN)
+        if not judging_window_open(score_obj.competition) and not user_can_edit_competition(request.user, score_obj.competition):
+            return Response({"detail": "Judging deadline has passed for this competition."}, status=status.HTTP_400_BAD_REQUEST)
         competition = score_obj.competition
         score_obj.delete()
         round_scores = build_round_score_tables(competition, request)
