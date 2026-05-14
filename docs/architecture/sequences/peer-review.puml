@@ -1,0 +1,27 @@
+@startuml Judgify_Peer_Review
+!theme plain
+title Sequence - Peer Review
+
+actor "Approved Participant" as reviewer
+participant "Competition UI" as ui
+participant "Judging API" as api
+participant "Domain Validation" as domain
+database "PostgreSQL" as db
+
+reviewer -> ui : Open peer review workspace
+ui -> api : GET /competitions/{id}/judging/?mode=peer_review
+api -> domain : Check peer review enabled\nand reviewer eligibility
+api -> db : Load reviewable submissions\nexcluding own subject when configured
+api --> ui : Peer review queue
+
+reviewer -> ui : Submit peer score
+ui -> api : POST /competitions/{id}/judging/
+api -> domain : Validate peer review window,\nvisibility, uniqueness
+api -> db : Create or update peer score
+api --> ui : Peer score saved
+
+ui -> api : GET /competitions/{id}/results/
+api -> db : Aggregate according to mode\naverage or sum
+api --> ui : Leaderboard preview if visible
+
+@enduml

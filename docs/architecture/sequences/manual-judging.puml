@@ -1,0 +1,44 @@
+@startuml Judgify_Manual_Judging
+!theme plain
+title Sequence - Manual Judging
+
+actor "Organizer" as organizer
+actor "Judge" as judge
+participant "Competition UI" as ui
+participant "Judging API" as api
+participant "Domain Validation" as domain
+database "PostgreSQL" as db
+
+organizer -> ui : Assign user as judge
+ui -> api : POST /competitions/{id}/judges/
+api -> domain : Ensure user is not participant/team member
+api -> db : Create judge assignment\nand judge participant marker
+api --> ui : Invitation/assignment created
+
+judge -> ui : Accept invitation
+ui -> api : POST /competitions/{id}/judges/accept/
+api -> db : Mark assignment accepted
+api --> ui : Judge workspace available
+
+judge -> ui : Open Judging tab
+ui -> api : GET /competitions/{id}/judging/
+api -> db : Load assigned submissions,\ncriteria, own scores
+api --> ui : Judging table and criteria metadata
+
+judge -> ui : Enter scores and comment
+ui -> api : POST /competitions/{id}/judging/
+api -> domain : Validate deadline and uniqueness\njudge + submission + round + criterion
+alt no previous score
+  api -> db : Create score entries
+else own score exists before deadline
+  api -> db : Update own score entries
+end
+api --> ui : Saved score summary
+
+... judging deadline passes ...
+judge -> ui : Try edit own score
+ui -> api : POST /competitions/{id}/judging/
+api -> domain : Reject after judging deadline
+api --> ui : Score locked
+
+@enduml

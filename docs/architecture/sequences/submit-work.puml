@@ -1,0 +1,41 @@
+@startuml Judgify_Submit_Work
+!theme plain
+title Sequence - Submit Work
+
+actor "Approved Participant or Captain" as participant
+participant "Competition Detail UI" as ui
+participant "Submission API" as api
+participant "Domain Validation" as domain
+database "PostgreSQL" as db
+folder "MEDIA_ROOT / Object Storage" as media
+
+participant -> ui : Open active round
+ui -> api : GET /competitions/{id}/
+api -> db : Load participant/team status\nand active round
+api --> ui : Submit affordance if allowed
+
+participant -> ui : Add link, text, or file
+ui -> api : POST /competitions/{id}/rounds/{round}/submissions/
+api -> domain : Validate approved subject,\nround window, policy, file size
+alt file included
+  api -> media : Store file bytes
+  api -> db : Store UserFile metadata
+end
+
+alt single policy and existing submission
+  api --> ui : Return existing or validation error
+else latest policy and existing submission
+  api -> db : Update existing submission
+  api --> ui : Submitted / updated
+else multiple policy
+  api -> db : Create additional submission
+  api --> ui : Submitted
+end
+
+... deadline passes ...
+participant -> ui : Try update after deadline
+ui -> api : PATCH submission
+api -> domain : Reject locked round
+api --> ui : Locked after deadline
+
+@enduml

@@ -1,0 +1,30 @@
+@startuml Judgify_Results_Publication
+!theme plain
+title Sequence - Results Publication
+
+actor "Organizer" as organizer
+actor "Participant" as participant
+participant "Results UI" as ui
+participant "Results API" as api
+participant "Domain Service" as domain
+database "PostgreSQL" as db
+
+organizer -> ui : Open results preview
+ui -> api : GET /competitions/{id}/results/
+api -> domain : Check organizer/admin permission
+api -> db : Load scores across rounds
+domain -> domain : Group by team or participant\nApply average or sum
+api --> ui : Preview leaderboard
+
+organizer -> ui : Publish results
+ui -> api : POST /competitions/{id}/results/publish/
+api -> db : Mark results visible\nand competition finished if applicable
+api --> ui : Published
+
+participant -> ui : Open Results
+ui -> api : GET /competitions/{id}/results/
+api -> domain : Check visibility policy
+api -> db : Load public leaderboard
+api --> ui : Sorted results without duplicates
+
+@enduml

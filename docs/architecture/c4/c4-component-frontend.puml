@@ -1,0 +1,51 @@
+@startuml Judgify_C4_Frontend_Components
+!theme plain
+title C4 Component - React Frontend
+
+skinparam shadowing false
+skinparam rectangle {
+  RoundCorner 12
+}
+
+actor "User" as user
+
+rectangle "React/Vite Frontend" as app {
+  rectangle "App Shell\nrouting, language,\naccount context" as shell
+  rectangle "Landing Page\nstatus tabs, filters,\ncompetition cards, timers" as landing
+  rectangle "Competition Detail\nOverview, Participants,\nSubmissions, Judging, Results" as detail
+  rectangle "Competition Builder\nmulti-step draft/edit flow" as builder
+  rectangle "Profile Dashboard\nsaved, recent, notifications,\nmaterials, awards" as profile
+  rectangle "Admin Panel\nusers, competitions,\nfilters, diagnostics" as admin
+  rectangle "API Client\nCSRF, auth-aware requests,\nerror normalization" as client
+  rectangle "Localization\nEnglish and Ukrainian strings" as i18n
+}
+
+rectangle "Django REST API" as api
+
+user --> shell : Opens app
+shell --> landing
+shell --> detail
+shell --> builder
+shell --> profile
+shell --> admin
+
+landing --> client
+detail --> client
+builder --> client
+profile --> client
+admin --> client
+shell --> i18n
+landing --> i18n
+detail --> i18n
+builder --> i18n
+profile --> i18n
+admin --> i18n
+
+client --> api : JSON API\nCSRF-protected writes
+
+note bottom of shell
+  Account switching must clear stale state,
+  reload permissions, saved items, and landing data.
+end note
+
+@enduml

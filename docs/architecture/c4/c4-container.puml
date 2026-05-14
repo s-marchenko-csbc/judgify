@@ -1,0 +1,44 @@
+@startuml Judgify_C4_Container
+!theme plain
+title C4 Container - Judgify
+
+skinparam shadowing false
+skinparam rectangle {
+  RoundCorner 12
+}
+
+actor "Visitor / User" as user
+actor "Organizer" as organizer
+actor "Administrator" as admin
+
+rectangle "Browser" as browser {
+  rectangle "React/Vite Frontend\nStatic site on Render" as frontend
+}
+
+rectangle "Render Web Service" as apiHost {
+  rectangle "Django REST API\nDRF, auth, permissions, serializers" as api
+  rectangle "Startup Script\nmigrate, optional seed, gunicorn" as startup
+}
+
+database "PostgreSQL\nDomain state" as db
+folder "MEDIA_ROOT\nLocal or mounted file store" as media
+queue "OutboundMessage Queue\nPersisted, provider pending" as messages
+
+user --> frontend : Uses landing, profile,\ncompetition pages
+organizer --> frontend : Uses builder, admin-like\ncompetition controls
+admin --> frontend : Uses admin panel
+
+frontend --> api : HTTPS JSON API\nCSRF-protected writes
+api --> db : ORM queries and transactions
+api --> media : Upload/download metadata\nand file bytes
+api --> messages : Persist invitations\nand notifications
+startup --> api : Starts runtime
+startup --> db : Runs migrations\nand idempotent seed
+
+note bottom of api
+  Business rules must be enforced here:
+  roles, deadlines, judging idempotency,
+  participant counts, saved state isolation.
+end note
+
+@enduml

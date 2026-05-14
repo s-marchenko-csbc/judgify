@@ -2,8 +2,9 @@
 
 This document describes Judgify as if the product had been built through
 spec-driven development. It is the canonical product and engineering
-specification for the tournament platform, complementing `README.md`,
-`DATA_MODEL_NOTES.md`, `SECURITY_NOTES.md`, and the Django migrations.
+specification for the tournament platform, complementing
+`docs/en/overview.md`, `docs/en/data-model.md`, `docs/en/security.md`, and
+the Django migrations.
 
 ## 1. Product Scope
 
@@ -639,7 +640,71 @@ Behavioral smoke checks should confirm:
 - account switching changes available actions immediately;
 - archived competitions show no Join or Submit action.
 
-## 19. Non-Goals For Current Version
+## 19. Architecture Quality Assessment
+
+Current strengths:
+
+- Clear separation between React frontend, Django REST API, and PostgreSQL.
+- Critical workflows are enforced through backend permissions instead of only
+  frontend state.
+- The core domain is normalized across competitions, rounds, participants,
+  teams, submissions, judging, awards, profile dashboards, saved items,
+  announcements, and comments.
+- Demo data is seeded through an idempotent command and backed by an integrity
+  validation command.
+- Render Blueprint keeps deployment topology reproducible.
+
+Current risks and architectural pressure points:
+
+- Some high-volume lists still depend on frontend pagination, which is useful
+  for UX but not sufficient as data grows.
+- Real-time timers and presence currently do not have a dedicated WebSocket or
+  Server-Sent Events layer.
+- Production-grade file handling needs object storage, malware scanning, and
+  signed download URLs as a standard path rather than an optional extension.
+- Outbound messages are persisted but do not yet have a worker/provider
+  integration for reliable delivery.
+- Admin and organizer actions need a fuller audit trail.
+- Automated coverage must be broadened for role conflicts, date transitions,
+  judging idempotency, leaderboard aggregation, and demo seed integrity.
+- Observability and SLOs are not yet formalized enough for a mature production
+  service.
+
+## 20. Future Software Quality Needs
+
+Quality assurance should become a dedicated engineering stream with explicit
+release gates:
+
+- Unit tests for domain rules: lifecycle statuses, deadline validation,
+  role-based permissions, judging modes, aggregation, and archived behavior.
+- Integration tests for API flows: Join, Submit, Judge, Results, Saved,
+  Profile, Admin, comments, announcements, and file uploads.
+- Browser E2E tests for anonymous-to-authenticated join flow, competition
+  builder, active editing, judging workspace, results publication, account
+  switching, and profile notifications.
+- OpenAPI/schema generation and contract tests between frontend and backend.
+- Regression checks for `seed_landing_if_empty` and
+  `validate_demo_integrity --warnings-as-errors`.
+- Table-driven or property-based tests for time/status transitions.
+- Visual regression for landing tabs/cards, profile popover, builder,
+  judging tables, modal criteria details, admin tables, and responsive layouts.
+- Accessibility checks for keyboard navigation, focus management, contrast,
+  form labels, tab panels, and modals.
+- i18n completeness checks for English and Ukrainian strings.
+- Performance budgets for landing, competition detail, profile dashboard, and
+  admin tables.
+- Load tests for landing APIs, participant lists, judging saves, comments, and
+  file uploads.
+- Security checks: dependency scanning, SAST, CSRF regression, rate limiting,
+  password policy verification, and file upload scanning.
+- Migration tests covering forward migration, rollback strategy, and seed
+  compatibility.
+- Observability: structured logs, request metrics, traces, error tracking,
+  health checks, and alert thresholds.
+- Deployment quality gates: backend check, migration dry-run, frontend build,
+  integrity validation, and smoke tests before promoting a release.
+
+## 21. Non-Goals For Current Version
 
 The current product does not guarantee:
 
@@ -653,7 +718,7 @@ The current product does not guarantee:
 These are valid future extensions but should be specified separately before
 implementation.
 
-## 20. Change Management
+## 22. Change Management
 
 When adding features:
 
@@ -662,4 +727,4 @@ When adding features:
 3. Add/update frontend affordances and localization.
 4. Add demo seed coverage when the scenario is user-visible.
 5. Run integrity and build checks.
-6. Record notable behavior changes in `CHANGELOG.md` when appropriate.
+6. Record notable behavior changes in `docs/en/changelog.md` when appropriate.

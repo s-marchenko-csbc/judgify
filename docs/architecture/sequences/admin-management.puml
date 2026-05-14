@@ -1,0 +1,34 @@
+@startuml Judgify_Admin_Management
+!theme plain
+title Sequence - Admin Management and Diagnostics
+
+actor "Administrator" as admin
+participant "Admin Panel" as ui
+participant "Admin API" as api
+participant "Domain Validation" as domain
+database "PostgreSQL" as db
+participant "Render / Runtime Metrics" as metrics
+
+admin -> ui : Open admin panel
+ui -> api : GET /api/admin/summary/
+api -> db : Load users, competitions,\npending requests, filters
+api -> metrics : Load server diagnostics\nwhen available
+api --> ui : Admin dashboard
+
+admin -> ui : Edit landing filter
+ui -> api : PATCH /api/admin/filters/{id}/
+api -> domain : Allow edit/hide,\nblock hard delete
+api -> db : Persist filter settings
+api --> ui : Updated filters
+
+admin -> ui : Delete user or competition
+ui -> api : DELETE /api/admin/resources/{id}/
+api -> domain : Validate referential safety\nand ownership fallout
+alt safe delete
+  api -> db : Soft-delete or archive resource
+  api --> ui : Deleted/archived
+else unsafe delete
+  api --> ui : Validation error with dependencies
+end
+
+@enduml

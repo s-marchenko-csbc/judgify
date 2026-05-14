@@ -1,0 +1,55 @@
+@startuml Judgify_C4_Backend_Components
+!theme plain
+title C4 Component - Django Backend
+
+skinparam shadowing false
+skinparam rectangle {
+  RoundCorner 12
+}
+
+actor "React Frontend" as frontend
+
+rectangle "Django REST API" as api {
+  rectangle "Auth & Profile API\nCSRF, login, account switching,\nprofile dashboard" as auth
+  rectangle "Landing API\ncards, tabs, filters,\nparticipant/comment counts" as landing
+  rectangle "Competition API\ndetail, builder, rounds,\nregistration, announcements" as competition
+  rectangle "Submission API\nmaterials, uploads,\nround submission policy" as submission
+  rectangle "Judging API\nassignments, scores,\ncriteria, aggregation" as judging
+  rectangle "Admin API\nusers, competitions,\nfilters, diagnostics" as adminApi
+  rectangle "Domain Services\nstatus transitions,\npermission decisions,\nintegrity validation" as domain
+  rectangle "Seed & Validation Commands\nseed_landing_if_empty,\nvalidate_demo_integrity" as commands
+}
+
+database "PostgreSQL" as db
+folder "MEDIA_ROOT / Object Storage" as media
+
+frontend --> auth : /api/auth/*\n/api/me/*
+frontend --> landing : /api/landing/*
+frontend --> competition : /api/competitions/*
+frontend --> submission : /api/competitions/{id}/submissions/*
+frontend --> judging : /api/competitions/{id}/judging/*
+frontend --> adminApi : /api/admin/*
+
+auth --> domain
+landing --> domain
+competition --> domain
+submission --> domain
+judging --> domain
+adminApi --> domain
+commands --> domain
+
+domain --> db : Enforce data integrity\nand transactional rules
+submission --> media : Store and retrieve files
+auth --> db
+landing --> db
+competition --> db
+judging --> db
+adminApi --> db
+
+note right of judging
+  Score uniqueness:
+  judge + submission + round + criterion.
+  Updates replace own score before deadline.
+end note
+
+@enduml

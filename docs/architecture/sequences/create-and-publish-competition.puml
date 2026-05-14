@@ -1,0 +1,40 @@
+@startuml Judgify_Create_Publish_Competition
+!theme plain
+title Sequence - Create and Publish Competition
+
+actor "Organizer" as organizer
+participant "Competition Builder" as ui
+participant "Competition API" as api
+participant "Domain Validation" as domain
+database "PostgreSQL" as db
+
+organizer -> ui : Open builder
+ui -> api : POST /competitions/ draft
+api -> db : Create draft with owner
+api --> ui : Draft id
+
+loop Steps 1..5
+  organizer -> ui : Edit fields, rounds, criteria, awards
+  ui -> api : PATCH /competitions/{id}/
+  api -> domain : Validate changed fields
+  domain -> domain : Normalize next round starts_at\nif missing
+  api -> db : Save draft state and setup_step
+  api --> ui : Updated draft
+end
+
+organizer -> ui : Publish
+ui -> api : POST /competitions/{id}/publish/
+api -> domain : Validate required fields,\nround order, criteria, dates
+alt valid
+  api -> db : Set published or active
+  api --> ui : Published competition
+  ui -> api : GET /landing/competitions/
+  api --> ui : Competition appears on landing
+else invalid
+  api --> ui : Validation errors
+  note right of db
+    Draft remains saved.
+  end note
+end
+
+@enduml

@@ -1,0 +1,40 @@
+@startuml Judgify_C4_Context
+!theme plain
+title C4 Context - Judgify
+
+skinparam shadowing false
+skinparam rectangle {
+  RoundCorner 12
+}
+
+actor "Anonymous Visitor" as visitor
+actor "Participant" as participant
+actor "Organizer" as organizer
+actor "Judge\n(competition scoped)" as judge
+actor "Administrator" as admin
+
+rectangle "Judgify Platform\nTournament and competition management" as judgify
+
+database "PostgreSQL\nRender managed database" as postgres
+folder "MEDIA_ROOT / Object Storage\nUploaded files and materials" as media
+cloud "Render\nHosting, deploys, logs, metrics" as render
+cloud "Future Notification Provider\nEmail / platform notifications" as notification
+
+visitor --> judgify : Browse public competitions\nView public results
+participant --> judgify : Register, join, submit,\nreview, save competitions
+organizer --> judgify : Create competitions,\nmanage rounds, judges, results
+judge --> judgify : Review assigned submissions\nEdit own scores before deadline
+admin --> judgify : Manage users, competitions,\nfilters, diagnostics
+
+judgify --> postgres : Store domain data\nusers, competitions, scores
+judgify --> media : Store and retrieve files\nthrough permission checks
+judgify --> notification : Queue future messages
+render --> judgify : Host frontend and API
+render --> postgres : Provision database
+
+note right of judgify
+  Judge is not an account-level role.
+  It is assigned inside a specific competition.
+end note
+
+@enduml

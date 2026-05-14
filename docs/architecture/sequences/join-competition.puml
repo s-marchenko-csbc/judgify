@@ -1,0 +1,43 @@
+@startuml Judgify_Join_Competition
+!theme plain
+title Sequence - Join Competition
+
+actor "Anonymous Visitor" as visitor
+actor "Participant" as participant
+participant "React Frontend" as ui
+participant "Auth API" as auth
+participant "Competition API" as api
+database "PostgreSQL" as db
+
+visitor -> ui : Open competition page
+ui -> api : GET /competitions/{id}/
+api -> db : Load public detail and join policy
+api --> ui : Detail with can_join hint
+
+visitor -> ui : Click Join
+ui -> auth : Require login/register\npreserve return_to competition URL
+auth --> ui : Auth form
+participant -> ui : Login or register
+ui -> auth : POST auth request with CSRF
+auth -> db : Create/session user
+auth --> ui : Authenticated account
+ui -> api : GET /competitions/{id}/\nwith account context
+api --> ui : Detail with user participation state
+
+participant -> ui : Submit join request
+ui -> api : POST /competitions/{id}/join/
+api -> db : Check no existing active request
+alt application mode
+  api -> db : Create pending participant
+  api --> ui : Pending / Очікує підтвердження
+else open auto-approval
+  api -> db : Create approved participant
+  api --> ui : Approved participant
+end
+
+participant -> ui : Click Join again
+ui -> api : POST /competitions/{id}/join/
+api -> db : Reuse existing record
+api --> ui : Same status, no duplicate
+
+@enduml

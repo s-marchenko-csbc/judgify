@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
++ Added:
+- Bilingual documentation structure under `docs/en` and `docs/uk`.
+- PlantUML architecture folder with C4 and sequence diagrams.
+- Architecture quality assessment and future software quality needs in the product specification.
+
+~ Changed:
+- Moved root documentation into the dedicated `docs/` folder and kept the root README as a navigation entry point.
+
 ## v28.5.1
 
 ! Fixed:
@@ -181,7 +191,7 @@ Format follows the practical parts of **Keep a Changelog**: `Added`, `Changed`, 
 ## [v16] - 2026-05-02
 
 ### Added
-- [PROJECT] Added `CHANGELOG.md` as the main change notes file for the project.
+- [PROJECT] Added `docs/en/changelog.md` as the main change notes file for the project.
 - [PROJECT] Added `VERSION` file to identify the current project package version.
 
 ### Changed
@@ -221,7 +231,7 @@ Format follows the practical parts of **Keep a Changelog**: `Added`, `Changed`, 
 - [DATA_MODEL] Added backend profile data model: profile, files, badges, certificates, materials and recently viewed competitions.
 - [COMPETITION] Added `draft` competition status.
 - [API] Added `/me/profile-dashboard/` endpoint.
-- [DOCS] Added `DATA_MODEL_NOTES.md` with large-file storage notes.
+- [DOCS] Added `docs/en/data-model.md` with large-file storage notes.
 
 ### Changed
 - [PROFILE] Profile dashboard now uses backend-shaped data for saved, recently viewed, archived and draft competitions.
