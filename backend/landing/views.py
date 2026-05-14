@@ -1909,6 +1909,7 @@ class CompetitionParticipantsView(APIView):
         serializer = CompetitionParticipantSerializer(
             participants,
             many=True,
+            context={"request": request},
         )
         return Response(serializer.data)
 
@@ -2208,20 +2209,26 @@ def judging_subjects(competition, request=None):
         "round__sort_order", "team__name", "participant__display_name", "-updated_at"
     )
 
-    subjects = []
+    subjects_by_key = {}
     for submission in submissions:
         if submission.team_id:
             subject_name = submission.team.name
             subject_type = "team"
+            subject_id = f"team-{submission.team_id}"
         elif submission.participant_id:
             subject_name = submission.participant.display_name
             subject_type = "participant"
+            subject_id = f"participant-{submission.participant_id}"
         else:
             subject_name = submission.title or "Submission"
             subject_type = "submission"
-        subjects.append({
+            subject_id = f"submission-{submission.id}"
+        row_key = (submission.round_id, subject_id)
+        if row_key in subjects_by_key:
+            continue
+        subjects_by_key[row_key] = {
             "type": subject_type,
-            "id": f"submission-{submission.id}",
+            "id": subject_id,
             "submission_id": submission.id,
             "round_id": submission.round_id,
             "team_id": submission.team_id,
@@ -2238,8 +2245,25 @@ def judging_subjects(competition, request=None):
                 "size_bytes": submission.file.size_bytes,
                 "url": build_file_download_url(submission.file, request),
             } if submission.file else None,
-        })
-    return subjects
+        }
+    return list(subjects_by_key.values())
+
+
+def score_subject_id(score):
+    if score.subject_team_id:
+        return f"team-{score.subject_team_id}"
+    if score.subject_participant_id:
+        return f"participant-{score.subject_participant_id}"
+    submission = getattr(score, "submission", None)
+    if submission:
+        if submission.team_id:
+            return f"team-{submission.team_id}"
+        if submission.participant_id:
+            return f"participant-{submission.participant_id}"
+        return f"submission-{submission.id}"
+    if score.submission_id:
+        return f"submission-{score.submission_id}"
+    return None
 
 
 def user_competition_membership(user, competition):
@@ -2451,14 +2475,14 @@ def build_round_score_tables(competition, request=None):
         "judge",
         "subject_participant",
         "subject_team",
+        "submission",
+        "submission__participant",
+        "submission__team",
     ).order_by("round__sort_order", "criterion__sort_order", "id")
 
     grouped = {}
     for item in scores:
-        if item.submission_id:
-            subject_id = f"submission-{item.submission_id}"
-        else:
-            subject_id = f"team-{item.subject_team_id}" if item.subject_team_id else f"participant-{item.subject_participant_id}"
+        subject_id = score_subject_id(item)
         if subject_id not in subject_lookup:
             continue
         row_key = (item.round_id, subject_id)
@@ -2492,8 +2516,10 @@ def build_round_score_tables(competition, request=None):
                 criterion_values.append({
                     "criterion_id": criterion.id,
                     "title": criterion.title,
+                    "description": criterion.description,
                     "max_score": criterion.max_score,
                     "weight": criterion.weight,
+                    "judging_mode": criterion.judging_mode,
                     "score": value,
                     "score_count": len(entries),
                 })

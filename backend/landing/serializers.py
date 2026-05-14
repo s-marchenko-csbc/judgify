@@ -606,6 +606,7 @@ class CompetitionAnnouncementSerializer(serializers.ModelSerializer):
 class TeamMemberSerializer(serializers.ModelSerializer):
     user_name = serializers.SerializerMethodField()
     avatar = serializers.SerializerMethodField()
+    is_active_now = serializers.SerializerMethodField()
 
     class Meta:
         model = CompetitionParticipant
@@ -622,6 +623,11 @@ class TeamMemberSerializer(serializers.ModelSerializer):
         if profile and profile.avatar_file:
             return profile.avatar_file.public_url or ""
         return ""
+
+    def get_is_active_now(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return bool(obj.is_active_now or (user and user.is_authenticated and obj.user_id == user.id and obj.status == "approved"))
 
 
 class CompetitionTeamSerializer(serializers.ModelSerializer):
@@ -646,6 +652,7 @@ class CompetitionTeamSerializer(serializers.ModelSerializer):
 class CompetitionParticipantSerializer(serializers.ModelSerializer):
     user_name = serializers.SerializerMethodField()
     team_name = serializers.CharField(source="team.name", read_only=True)
+    is_active_now = serializers.SerializerMethodField()
 
     class Meta:
         model = CompetitionParticipant
@@ -676,6 +683,11 @@ class CompetitionParticipantSerializer(serializers.ModelSerializer):
                 return full_name
             return getattr(obj.user, "username", "") or getattr(obj.user, "email", "")
         return obj.display_name
+
+    def get_is_active_now(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return bool(obj.is_active_now or (user and user.is_authenticated and obj.user_id == user.id and obj.status == "approved"))
 
 
 class CompetitionJoinRequestSerializer(serializers.ModelSerializer):

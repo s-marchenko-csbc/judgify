@@ -1777,6 +1777,108 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   color: #687081;
 }
 
+.criterion-heading,
+.criterion-title-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.criterion-info-btn {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(99, 142, 203, 0.42);
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #395886;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.criterion-info-btn:hover {
+  background: #dbe8fb;
+}
+
+.criterion-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147482000;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(10, 11, 36, 0.42);
+}
+
+.criterion-modal {
+  width: min(560px, 100%);
+  max-height: min(620px, calc(100vh - 36px));
+  overflow: auto;
+  border: 1px solid rgba(99, 142, 203, 0.36);
+  border-radius: 16px;
+  background: #f8f8fc;
+  box-shadow: 0 24px 80px rgba(31, 51, 86, 0.28);
+  padding: 18px;
+}
+
+.criterion-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.criterion-modal-header h3 {
+  margin: 0;
+  color: #0a0b24;
+}
+
+.criterion-modal-header button {
+  border: 1px solid rgba(99, 142, 203, 0.24);
+  border-radius: 999px;
+  background: #fff;
+  color: #395886;
+  font-weight: 800;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.criterion-modal-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.criterion-modal-meta div {
+  border: 1px solid rgba(99, 142, 203, 0.18);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+}
+
+.criterion-modal-meta dt {
+  color: #647085;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.criterion-modal-meta dd {
+  margin: 4px 0 0;
+  color: #0a0b24;
+  font-weight: 900;
+}
+
+.criterion-modal p {
+  margin: 0;
+  color: #4a5160;
+  line-height: 1.45;
+}
+
 .scorecard-controls {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2039,6 +2141,10 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
   .pagination-actions button {
     flex: 1 1 0;
     min-width: 0;
+  }
+
+  .criterion-modal-meta {
+    grid-template-columns: 1fr;
   }
 
   .judging-metric-list {

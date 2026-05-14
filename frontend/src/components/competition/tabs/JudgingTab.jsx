@@ -36,6 +36,36 @@ function criterionAllowsReviewType(criterion, reviewType) {
   return mode === reviewType;
 }
 
+function CriterionInfoButton({ criterion }) {
+  const { t } = useLanguage();
+  const [open, setOpen] = useState(false);
+  if (!criterion) return null;
+
+  return (
+    <>
+      <button type="button" className="criterion-info-btn" onClick={() => setOpen(true)} aria-label={t("judgingTab.criteriaDetails")}>
+        i
+      </button>
+      {open && (
+        <div className="criterion-modal-backdrop" role="presentation" onClick={() => setOpen(false)}>
+          <div className="criterion-modal" role="dialog" aria-modal="true" aria-labelledby={`criterion-${criterion.criterion_id || criterion.id}`} onClick={(event) => event.stopPropagation()}>
+            <div className="criterion-modal-header">
+              <h3 id={`criterion-${criterion.criterion_id || criterion.id}`}>{criterion.title}</h3>
+              <button type="button" onClick={() => setOpen(false)}>{t("auth.close")}</button>
+            </div>
+            <dl className="criterion-modal-meta">
+              <div><dt>{t("judgingTab.max")}</dt><dd>{criterion.max_score}</dd></div>
+              <div><dt>{t("judgingTab.weight")}</dt><dd>{criterion.weight ?? 1}</dd></div>
+              <div><dt>{t("judgingTab.mode")}</dt><dd>{optionLabel(t, "review_type", criterion.judging_mode || "manual")}</dd></div>
+            </dl>
+            <p>{criterion.description || t("judgingTab.noCriterionDescription")}</p>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function submissionStatusLabel(t, status) {
   if (status === "accepted") return t("judgingTab.submitted", { defaultValue: "Submitted" });
   if (status === "locked") return t("judgingTab.locked", { defaultValue: "Locked" });
@@ -73,7 +103,7 @@ function SubmittedWorksPanel({ judging }) {
   const scoreRows = (judging?.round_scores || []).flatMap((table) => (
     (table.rows || []).map((row) => ({
       id: row.subject?.id,
-      title: row.subject?.title || row.subject?.name,
+      title: row.subject?.name || row.subject?.title,
       owner: row.subject?.name,
       round_title: table.round?.title,
       status: row.subject?.status,
@@ -315,7 +345,7 @@ function ScoreTables({ tables = [] }) {
       {tables.map((table) => {
         const criteria = table.rows?.[0]?.criteria || [];
         const criteriaCount = Math.max(criteria.length, 1);
-        const tableMinWidth = 360 + criteriaCount * 136 + 110;
+        const tableMinWidth = 360 + criteriaCount * 150;
 
         return (
           <div key={table.round?.id || table.round?.title} className="judging-round-block">
@@ -331,23 +361,26 @@ function ScoreTables({ tables = [] }) {
                   {criteria.map((criterion) => (
                     <col key={criterion.criterion_id} className="score-criterion-col" />
                   ))}
-                  <col className="score-total-col" />
                 </colgroup>
                 <thead>
                   <tr>
-                    <th>{t("judgingTab.submittedWork")}</th>
+                    <th>{t("judgingTab.subject")}</th>
                     {criteria.map((criterion) => (
-                      <th key={criterion.criterion_id}>{criterion.title}</th>
+                      <th key={criterion.criterion_id}>
+                        <span className="criterion-heading">
+                          {criterion.title}
+                          <CriterionInfoButton criterion={criterion} />
+                        </span>
+                      </th>
                     ))}
-                    <th>{t("resultsTab.total")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(table.rows || []).map((row) => (
                     <tr key={row.subject?.id}>
                       <td>
-                        <strong>{row.subject?.title || row.subject?.name}</strong>
-                        <small>{row.subject?.name}</small>
+                        <strong>{row.subject?.name || row.subject?.title}</strong>
+                        {row.subject?.title && row.subject?.title !== row.subject?.name && <small>{row.subject.title}</small>}
                       </td>
                       {(row.criteria || []).map((criterion) => (
                         <td key={criterion.criterion_id}>
@@ -355,12 +388,11 @@ function ScoreTables({ tables = [] }) {
                           <small> / {criterion.max_score}</small>
                         </td>
                       ))}
-                      <td><strong>{formatScore(row.total_score)}</strong></td>
                     </tr>
                   ))}
                   {!table.rows?.length && (
                     <tr>
-                      <td colSpan={criteria.length + 2}>{t("judgingTab.noAcceptedYet")}</td>
+                      <td colSpan={criteria.length + 1}>{t("judgingTab.noAcceptedYet")}</td>
                     </tr>
                   )}
                 </tbody>
@@ -455,11 +487,11 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
   const existingScoreMap = useMemo(() => {
     const map = {};
     (workspace?.existing_scores || []).forEach((score) => {
-      const scoreSubjectId = score.submission
-        ? `submission-${score.submission}`
-        : score.subject_team
-          ? `team-${score.subject_team}`
-          : `participant-${score.subject_participant}`;
+      const scoreSubjectId = score.subject_team
+        ? `team-${score.subject_team}`
+        : score.subject_participant
+          ? `participant-${score.subject_participant}`
+          : `submission-${score.submission}`;
       const key = [score.review_type, score.round, scoreSubjectId, score.criterion].join(":");
       map[key] = score;
     });
@@ -605,10 +637,10 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
           </select>
         </label>
         <label>
-          {t("judgingTab.submission")}
+          {t("judgingTab.subject")}
           <select value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
             {subjectsForRound.map((subject) => (
-              <option key={subject.id} value={subject.id}>{subject.title || subject.name}</option>
+              <option key={subject.id} value={subject.id}>{subject.name || subject.title}</option>
             ))}
           </select>
         </label>
@@ -622,7 +654,7 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
         <>
         {selectedSubject && (
           <div className="judge-material-box">
-            <strong>{selectedSubject.title || selectedSubject.name}</strong>
+            <strong>{selectedSubject.name || selectedSubject.title}</strong>
             <div>
               {selectedSubject.file?.url && <a href={selectedSubject.file.url} target="_blank" rel="noreferrer">{selectedSubject.file.original_name || t("judgingTab.file")}</a>}
               {selectedSubject.repository_url && <a href={selectedSubject.repository_url} target="_blank" rel="noreferrer">{t("judgingTab.repository")}</a>}
@@ -648,8 +680,13 @@ function JudgeScorecard({ judging, onScoreSubmit, onScoreDelete }) {
                 return (
                   <tr key={criterion.id}>
                     <td>
-                      <strong>{criterion.title}</strong>
-                      {criterion.description && <small>{criterion.description}</small>}
+                      <strong className="criterion-title-inline">
+                        {criterion.title}
+                        <CriterionInfoButton criterion={criterion} />
+                      </strong>
+                      <small>
+                        {t("judgingTab.weight")}: {criterion.weight ?? 1} - {optionLabel(t, "review_type", criterion.judging_mode || "manual")}
+                      </small>
                     </td>
                     <td>{criterion.max_score}</td>
                     <td>

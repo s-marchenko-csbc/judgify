@@ -904,7 +904,7 @@ class Command(BaseCommand):
             comp.manual_judging_enabled = True
             comp.automatic_judging_enabled = comp.industry in {"programming", "cybersecurity", "robotics"}
             comp.peer_review_enabled = comp.status in {"active", "judging"} or comp.participation_type == "individual"
-            comp.judging_aggregation = "average" if comp.status in {"judging", "finished"} else "sum"
+            comp.judging_aggregation = "sum" if comp.status == "active" or comp.name == "Robotics Pitch Review" else "average"
             comp.judging_visibility = "open" if comp.status in {"finished", "archived"} else "aggregate"
             comp.save(update_fields=[
                 "manual_judging_enabled",
@@ -1162,7 +1162,21 @@ class Command(BaseCommand):
         ]
         result_statuses = {"active", "judging", "finished", "archived"}
         for comp in competitions:
-            if comp.status not in result_statuses or comp.participation_type == "individual":
+            if comp.status not in result_statuses:
+                continue
+            if comp.participation_type == "individual":
+                for index, (participant_user, participant_name) in enumerate(fake_users[:5]):
+                    CompetitionParticipant.objects.update_or_create(
+                        competition=comp,
+                        user=participant_user,
+                        defaults={
+                            "display_name": participant_name,
+                            "role": "participant",
+                            "status": "approved",
+                            "team": None,
+                            "is_active_now": comp.status == "active" and index < 3,
+                        },
+                    )
                 continue
             for index, team_name in enumerate(demo_team_names):
                 pool_index = min(10 + index, len(fake_users) - 1)
