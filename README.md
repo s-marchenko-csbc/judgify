@@ -15,6 +15,7 @@ Judgify is a tournament and competition platform with a Django REST API and a Re
 - `frontend/` - React application
 - `render.yaml` - Render services and database blueprint
 - `docker-compose.yml` - local development stack
+- `SPECIFICATION.md` - product and engineering specification
 
 ## Configuration
 
