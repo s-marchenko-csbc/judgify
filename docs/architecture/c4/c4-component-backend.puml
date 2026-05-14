@@ -1,5 +1,5 @@
 @startuml Judgify_C4_Backend_Components
-!theme plain
+!include ../theme-judgify.puml
 title C4 Component - Django Backend
 
 skinparam shadowing false

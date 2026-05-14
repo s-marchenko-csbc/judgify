@@ -1,5 +1,5 @@
 @startuml Judgify_C4_Frontend_Components
-!theme plain
+!include ../theme-judgify.puml
 title C4 Component - React Frontend
 
 skinparam shadowing false

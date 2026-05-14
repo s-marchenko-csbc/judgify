@@ -1,5 +1,5 @@
 @startuml Judgify_Create_Publish_Competition
-!theme plain
+!include ../theme-judgify.puml
 title Sequence - Create and Publish Competition
 
 actor "Organizer" as organizer

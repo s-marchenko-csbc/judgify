@@ -1,5 +1,5 @@
 @startuml Judgify_C4_Container
-!theme plain
+!include ../theme-judgify.puml
 title C4 Container - Judgify
 
 skinparam shadowing false

@@ -1,0 +1,92 @@
+' Shared Judgify PlantUML theme.
+' Keep this file dependency-free so diagrams render in basic PlantUML tooling.
+
+skinparam backgroundColor #F7FAFF
+skinparam handwritten false
+skinparam shadowing false
+skinparam roundcorner 16
+skinparam defaultFontName "Inter"
+skinparam defaultFontSize 14
+skinparam defaultTextAlignment center
+skinparam dpi 150
+
+skinparam Title {
+  FontColor #13294B
+  FontSize 24
+  FontStyle bold
+  BorderRoundCorner 12
+  BackgroundColor #E7F0FF
+  BorderColor #B8CBEC
+}
+
+skinparam ArrowColor #315B93
+skinparam ArrowThickness 1.4
+skinparam NoteBackgroundColor #FFF7E8
+skinparam NoteBorderColor #F2A94A
+skinparam NoteFontColor #24324A
+
+skinparam rectangle {
+  BackgroundColor #FFFFFF
+  BorderColor #82A6D9
+  FontColor #172B4D
+  FontSize 14
+  RoundCorner 18
+}
+
+skinparam database {
+  BackgroundColor #EAF8F4
+  BorderColor #2C7A68
+  FontColor #153B33
+}
+
+skinparam folder {
+  BackgroundColor #FFF3E6
+  BorderColor #E58A2F
+  FontColor #4A2B10
+}
+
+skinparam cloud {
+  BackgroundColor #EFF4FF
+  BorderColor #6D8FC8
+  FontColor #172B4D
+}
+
+skinparam queue {
+  BackgroundColor #F4EEFF
+  BorderColor #8A68C8
+  FontColor #2F2058
+}
+
+skinparam actor {
+  BackgroundColor #FFF0E6
+  BorderColor #E56C2C
+  FontColor #1E2A44
+}
+
+skinparam sequence {
+  ArrowColor #315B93
+  ArrowThickness 1.4
+  LifeLineBorderColor #9BB3D5
+  LifeLineBackgroundColor #EEF5FF
+  ParticipantBackgroundColor #EAF2FF
+  ParticipantBorderColor #5E86C5
+  ParticipantFontColor #13294B
+  ActorBackgroundColor #FFF0E6
+  ActorBorderColor #E56C2C
+  DatabaseBackgroundColor #EAF8F4
+  DatabaseBorderColor #2C7A68
+  BoxBackgroundColor #F4F8FF
+  BoxBorderColor #B8CBEC
+  GroupBackgroundColor #F8FBFF
+  GroupBorderColor #9BB3D5
+  DividerBackgroundColor #E7F0FF
+  DividerBorderColor #B8CBEC
+  ReferenceBackgroundColor #FFFFFF
+  ReferenceBorderColor #82A6D9
+}
+
+skinparam legend {
+  BackgroundColor #FFFFFF
+  BorderColor #D6E0F2
+  FontColor #24324A
+}

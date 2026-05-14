@@ -1,5 +1,5 @@
 @startuml Judgify_Join_Competition
-!theme plain
+!include ../theme-judgify.puml
 title Sequence - Join Competition
 
 actor "Anonymous Visitor" as visitor

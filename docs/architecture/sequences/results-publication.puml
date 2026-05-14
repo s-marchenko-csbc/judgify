@@ -1,5 +1,5 @@
 @startuml Judgify_Results_Publication
-!theme plain
+!include ../theme-judgify.puml
 title Sequence - Results Publication
 
 actor "Organizer" as organizer

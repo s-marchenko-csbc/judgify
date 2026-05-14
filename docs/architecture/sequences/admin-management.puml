@@ -1,5 +1,5 @@
 @startuml Judgify_Admin_Management
-!theme plain
+!include ../theme-judgify.puml
 title Sequence - Admin Management and Diagnostics
 
 actor "Administrator" as admin

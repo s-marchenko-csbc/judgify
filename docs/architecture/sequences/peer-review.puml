@@ -1,5 +1,5 @@
 @startuml Judgify_Peer_Review
-!theme plain
+!include ../theme-judgify.puml
 title Sequence - Peer Review
 
 actor "Approved Participant" as reviewer
