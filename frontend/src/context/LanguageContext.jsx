@@ -73,6 +73,13 @@ const dictionaries = {
       administrator: "Administrator",
       team_member: "Team member",
     },
+    pagination: {
+      label: "Pagination",
+      previous: "Previous",
+      next: "Next",
+      page: "{page} / {pages}",
+      range: "{start}-{end} of {total}",
+    },
     options: {
       status: {
         active: "Online",
@@ -811,6 +818,13 @@ const dictionaries = {
       admin: "Адміністратор",
       administrator: "Адміністратор",
       team_member: "Учасник команди",
+    },
+    pagination: {
+      label: "Пагінація",
+      previous: "Назад",
+      next: "Далі",
+      page: "{page} / {pages}",
+      range: "{start}-{end} з {total}",
     },
     options: {
       status: {

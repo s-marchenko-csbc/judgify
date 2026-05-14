@@ -45,7 +45,55 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
 .tab-btn.active { background: #adadad; }
 .competition-grid { display: grid; }
 .competition-grid.with-sidebar { grid-template-columns: 1fr 480px; gap: 18px; align-items: start; }
+.landing-card-results { min-width: 0; }
 .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(275px, 1fr)); gap: 26px; }
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin-top: 18px;
+  padding: 10px 12px;
+  border: 1px solid rgba(99, 142, 203, 0.22);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.56);
+  color: #395886;
+}
+
+.pagination-range {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pagination-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-actions button {
+  min-width: 88px;
+  height: 34px;
+  border: 1px solid rgba(99, 142, 203, 0.3);
+  border-radius: 999px;
+  background: rgba(240, 243, 250, 0.82);
+  color: #1f3356;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pagination-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pagination-actions span {
+  min-width: 70px;
+  text-align: center;
+  font-weight: 800;
+  color: #0a0b24;
+}
 .competition-card { background: #dcdcdc; border: 1px solid #666; border-radius: 10px; overflow: hidden; }
 .card-cover {
   position: relative;
@@ -1976,6 +2024,21 @@ body { margin: 0; font-family: Arial, sans-serif; background: #efefef; color: #1
 
   .competition-detail-tabs {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .pagination-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pagination-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .pagination-actions button {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .judging-metric-list {

@@ -3,6 +3,7 @@ import Header from "../components/Header";
 import FiltersSidebar from "../components/FiltersSidebar";
 import CompetitionTabs from "../components/CompetitionTabs";
 import CompetitionCard from "../components/CompetitionCard";
+import PaginationControls, { usePagination } from "../components/Pagination";
 import RightSidebar from "../components/RightSidebar";
 import SignUpModal from "../components/SignUpModal";
 import OnboardModal from "../components/auth/OnboardModal";
@@ -144,7 +145,9 @@ function LandingSkeleton({ withSidebar = false }) {
   );
 }
 
-function LatestCompetitionsBlock({ items, now, onSavedChange, title }) {
+function LatestCompetitionsBlock({ items, now, onSavedChange, title, t }) {
+  const pagination = usePagination(items, 6, title);
+
   if (!items.length) return null;
 
   return (
@@ -153,7 +156,7 @@ function LatestCompetitionsBlock({ items, now, onSavedChange, title }) {
         <h2 id="landing-latest-title">{title}</h2>
       </div>
       <div className="cards-grid landing-latest-grid">
-        {items.map((item) => (
+        {pagination.pageItems.map((item) => (
           <CompetitionCard
             key={`latest-${item.id}`}
             item={item}
@@ -162,6 +165,7 @@ function LatestCompetitionsBlock({ items, now, onSavedChange, title }) {
           />
         ))}
       </div>
+      <PaginationControls pagination={pagination} t={t} />
     </section>
   );
 }
@@ -242,6 +246,11 @@ export default function LandingPage() {
     const tabStatuses = statusTabs[filters.tab] || statusTabs.registration_open;
     return timedCompetitions.filter((item) => tabStatuses.includes(item.status));
   }, [filters.tab, timedCompetitions]);
+  const competitionPagination = usePagination(
+    displayedCompetitions,
+    isAuthenticated ? 6 : 9,
+    `${filters.tab}|${debouncedSearch}|${filters.event_type.join(",")}|${filters.participation_type.join(",")}|${filters.industry.join(",")}|${filters.difficulty.join(",")}|${filters.language.join(",")}`
+  );
 
   const latestCompetitions = useMemo(() => {
     const latest = sidebarData?.last_competitions || [];
@@ -251,7 +260,7 @@ export default function LandingPage() {
         is_saved: isAuthenticated && savedIds.has(item.id),
       }, now))
       .filter((item) => item?.status !== "archived")
-      .slice(0, 6);
+      .slice(0, 18);
   }, [isAuthenticated, now, savedIds, sidebarData]);
 
   useEffect(() => {
@@ -534,20 +543,23 @@ export default function LandingPage() {
                 isAuthenticated ? "with-sidebar" : ""
               }`}
             >
-              <div className="cards-grid">
-                {displayedCompetitions.map((item) => (
-                  <CompetitionCard
-                    key={item.id}
-                    item={item}
-                    now={now}
-                    onSavedChange={handleSavedChange}
-                  />
-                ))}
+              <div className="landing-card-results">
+                <div className="cards-grid">
+                  {competitionPagination.pageItems.map((item) => (
+                    <CompetitionCard
+                      key={item.id}
+                      item={item}
+                      now={now}
+                      onSavedChange={handleSavedChange}
+                    />
+                  ))}
+                </div>
                 {!displayedCompetitions.length && (
                   <div className="landing-empty-state">
                     {t("landing.empty", { defaultValue: "No competitions in this tab yet." })}
                   </div>
                 )}
+                <PaginationControls pagination={competitionPagination} t={t} />
               </div>
 
               {isAuthenticated && (
@@ -562,6 +574,7 @@ export default function LandingPage() {
               now={now}
               onSavedChange={handleSavedChange}
               title={latestTitle}
+              t={t}
             />
           )}
         </main>

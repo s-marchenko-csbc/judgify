@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import AccountSwitcher from "../components/AccountSwitcher";
 import BrandLogo from "../components/BrandLogo";
+import PaginationControls, { usePagination } from "../components/Pagination";
 import { clearLandingFiltersCache } from "../api/landingApi";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
@@ -59,6 +60,8 @@ function StatGrid({ stats, t }) {
 }
 
 function UsersPanel({ users, filters, setFilters, onUpdate, onDelete, t, language }) {
+  const pagination = usePagination(users, 8, `${filters.search}|${filters.role}`);
+
   return (
     <section className="admin-panel">
       <div className="admin-panel-header">
@@ -75,7 +78,7 @@ function UsersPanel({ users, filters, setFilters, onUpdate, onDelete, t, languag
         <table className="admin-table">
           <thead><tr><th>{t("admin.users.user")}</th><th>{t("admin.users.role")}</th><th>{t("admin.users.status")}</th><th>{t("admin.users.staff")}</th><th>{t("admin.users.activity")}</th><th>{t("admin.actions")}</th></tr></thead>
           <tbody>
-            {users.map((user) => (
+            {pagination.pageItems.map((user) => (
               <tr key={user.id}>
                 <td><strong>{user.displayName}</strong><span>{user.email || user.username}</span></td>
                 <td>
@@ -100,11 +103,14 @@ function UsersPanel({ users, filters, setFilters, onUpdate, onDelete, t, languag
           </tbody>
         </table>
       </div>
+      <PaginationControls pagination={pagination} t={t} />
     </section>
   );
 }
 
 function CompetitionsPanel({ competitions, filters, setFilters, onUpdate, onDelete, t }) {
+  const pagination = usePagination(competitions, 8, `${filters.search}|${filters.status}`);
+
   return (
     <section className="admin-panel">
       <div className="admin-panel-header">
@@ -121,7 +127,7 @@ function CompetitionsPanel({ competitions, filters, setFilters, onUpdate, onDele
         <table className="admin-table">
           <thead><tr><th>{t("admin.competitions.competition")}</th><th>{t("admin.competitions.status")}</th><th>{t("admin.competitions.approval")}</th><th>{t("admin.competitions.visibility")}</th><th>{t("admin.competitions.catalog")}</th><th>{t("admin.actions")}</th></tr></thead>
           <tbody>
-            {competitions.map((competition) => (
+            {pagination.pageItems.map((competition) => (
               <tr key={competition.id}>
                 <td><strong>{competition.name}</strong><span>{competition.organizers?.join(", ") || t("admin.competitions.noOrganizer")}</span></td>
                 <td><select value={competition.status} onChange={(e) => onUpdate(competition.id, { status: e.target.value })}>{competitionStatuses.map((item) => <option key={item} value={item}>{t(`options.status.${item}`)}</option>)}</select></td>
@@ -142,6 +148,7 @@ function CompetitionsPanel({ competitions, filters, setFilters, onUpdate, onDele
           </tbody>
         </table>
       </div>
+      <PaginationControls pagination={pagination} t={t} />
     </section>
   );
 }
@@ -233,6 +240,7 @@ function FiltersPanel({ filterConfig, onLocalChange, onSave, onCreate, t }) {
   const rows = filterGroups.flatMap((group) =>
     (filterConfig?.[group] || []).map((item) => ({ ...item, group }))
   );
+  const pagination = usePagination(rows, 12, rows.map((item) => `${item.group}:${item.value}`).join("|"));
   const submitNewFilter = (event) => {
     event.preventDefault();
     const value = newFilter.value.trim();
@@ -270,7 +278,7 @@ function FiltersPanel({ filterConfig, onLocalChange, onSave, onCreate, t }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((item) => (
+            {pagination.pageItems.map((item) => (
               <tr key={`${item.group}:${item.value}`}>
                 <td><strong>{t(`filters.groups.${item.group}`, { defaultValue: item.group })}</strong></td>
                 <td><span>{item.value}</span></td>
@@ -315,6 +323,7 @@ function FiltersPanel({ filterConfig, onLocalChange, onSave, onCreate, t }) {
           </tbody>
         </table>
       </div>
+      <PaginationControls pagination={pagination} t={t} />
     </section>
   );
 }
