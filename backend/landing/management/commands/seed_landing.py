@@ -801,14 +801,19 @@ class Command(BaseCommand):
                 continue
 
             if comp.status == "judging":
-                start_at = now - timedelta(days=1)
-                end_at = month_end
-                self._apply_round_windows(comp, start_at, end_at, max(comp.total_rounds, 3), now)
+                round_count = max(comp.total_rounds, 3)
+                start_at = now - timedelta(days=round_count + 1)
+                end_at = now - timedelta(hours=2)
+                self._apply_round_windows(comp, start_at, end_at, round_count, now)
                 comp.current_round = comp.total_rounds
                 comp.timer_deadline = month_end
+                comp.ends_at = end_at
                 comp.judging_starts_at = now - timedelta(hours=1)
                 comp.judging_ends_at = month_end
+                comp.results_public_at = month_end + timedelta(hours=2)
+                comp.registration_open = False
                 comp.submissions_open = False
+                comp.is_online_now = False
                 comp.save()
                 continue
 
